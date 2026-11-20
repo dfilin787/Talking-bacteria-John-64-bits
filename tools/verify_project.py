@@ -173,7 +173,9 @@ def check_bridging():
     vendor = os.path.join(ROOT, "Vendor", "SoundTouch")
     for needed in ("SoundTouch.cpp", "SoundTouch.h", "TDStretch.cpp", "RateTransposer.cpp",
                    "FIFOSampleBuffer.cpp", "AAFilter.cpp", "FIRFilter.cpp", "STTypes.h",
-                   "soundtouch_config.h"):
+                   "soundtouch_config.h", "cpu_detect_x86.cpp", "BPMDetect.cpp",
+                   "PeakFinder.cpp", "InterpolateCubic.cpp", "InterpolateLinear.cpp",
+                   "InterpolateShannon.cpp"):
         if not os.path.exists(os.path.join(vendor, needed)):
             fail("нет файла SoundTouch: %s" % needed)
     cpp = [f for f in os.listdir(vendor) if f.endswith(".cpp")]
