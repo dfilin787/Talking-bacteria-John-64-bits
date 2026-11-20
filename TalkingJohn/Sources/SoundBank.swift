@@ -24,9 +24,15 @@ final class SoundBank {
     }
 
     private var buffers: [String: AVAudioPCMBuffer] = [:]
-    private let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)
+    /// Моно 44.1 кГц — формат, в котором работают все голоса движка.
+    private let format: AVAudioFormat
 
-    private init() {}
+    private init() {
+        guard let mono = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1) else {
+            fatalError("Не удалось создать формат моно 44.1 кГц")
+        }
+        format = mono
+    }
 
     /// Читает WAV из папки-референса `Sounds` и приводит к формату движка.
     func buffer(for effect: Effect) -> AVAudioPCMBuffer? {

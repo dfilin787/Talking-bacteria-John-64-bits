@@ -21,6 +21,11 @@ targets:
       - path: TalkingJohn/Sources
       - path: TalkingJohn/Support
       - path: Vendor/SoundTouch
+        excludes:
+          - "LICENSE.TXT"
+          - "README.html"
+          - "Makefile.am"
+          - "CMakeLists.txt"
       - path: Assets/Animations
         type: folder
       - path: Assets/Sounds
