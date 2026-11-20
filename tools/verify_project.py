@@ -106,12 +106,12 @@ def check_ui_images(texts):
             referenced.add("%s%d" % (prefix, i))
     referenced = {n for n in referenced if "\\" not in n}
     assert "RecButton3" in referenced, "интерполяция RecButton не развернулась"
-    # Кнопки предметов берут ассеты из таблицы (имя, селектор, подпись).
-    table = re.findall(r'\("([A-Za-z0-9_@.-]+)", #selector\((\w+)\), "([^"]+)"\)', joined)
-    for asset, selector, _ in table:
+    # Кнопки предметов: configureItem(button, image: "asset", action: #selector(...)).
+    table = re.findall(r'configureItem\([^,]+, image: "([^"]+)", action: #selector\((\w+)\)', joined)
+    for asset, selector in table:
         referenced.add(asset)
         if "func " + selector not in joined:
-            fail("селектор %s из таблицы кнопок не реализован" % selector)
+            fail("селектор %s из configureItem не реализован" % selector)
     notes.append("кнопок предметов: %d" % len(table))
     on_disk = {os.path.splitext(f)[0] for f in os.listdir(os.path.join(ASSETS, "UI"))}
     on_disk_base = {n.replace("@2x", "") for n in on_disk}

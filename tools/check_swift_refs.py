@@ -53,7 +53,8 @@ def main():
     instantiated = set(re.findall(r"\b([A-Z]\w+)\(", joined))
     known_system = {
         "CGRect", "CGPoint", "CGSize", "UIColor", "UIImage", "UIView", "UILabel",
-        "UIImageView", "UIButton", "UITapGestureRecognizer", "UIWindow", "UIApplication",
+        "UIImageView", "UIButton", "UITapGestureRecognizer", "UIPanGestureRecognizer",
+        "UIWindow", "UIApplication",
         "UISceneConfiguration", "UIGraphicsImageRenderer", "CADisplayLink", "CAFrameRateRange",
         "AVAudioEngine", "AVAudioPlayerNode", "AVAudioFormat", "AVAudioPCMBuffer",
         "AVAudioFrameCount", "AVAudioConverter", "AVAudioFile", "AVAudioSession",

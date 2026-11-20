@@ -163,6 +163,14 @@ def main():
             with open(dest, "wb") as fh:
                 fh.write(z.read(name))
             sounds.append(base)
+        elif ext == ".jpg" and "/" not in rel and base not in SKIP_NAMES:
+            # Фоны оригинала — JPEG (Blood-3-iphone.jpg из nib).
+            dest = os.path.join(ASSETS, "UI", base)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "wb") as fh:
+                fh.write(z.read(name))
+            report["copied"] += 1
+            ui.append(base)
         elif ext == ".png" and "/" not in rel and base not in SKIP_NAMES:
             dest = os.path.join(ASSETS, "UI", base)
             save_png(z.read(name), dest, report)

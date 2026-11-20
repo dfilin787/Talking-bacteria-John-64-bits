@@ -110,6 +110,8 @@
     "smeh3.wav"
   ],
   "ui": [
+    "Blood-3-iphone.jpg",
+    "Blood-membrane-iPhone.jpg",
     "RecButton0.png",
     "RecButton0@2x.png",
     "RecButton1.png",
@@ -135,6 +137,7 @@
     "injection-60@2x.png",
     "lucka.png",
     "pill-50.png",
-    "pill-50@2x.png"
+    "pill-50@2x.png",
+    "wealth-splash-background.jpg"
   ]
 }
