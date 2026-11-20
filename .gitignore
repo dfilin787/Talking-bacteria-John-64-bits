@@ -1,0 +1,17 @@
+# Xcode
+build/
+build-signed/
+out/
+Payload/
+*.xcodeproj
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.log
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc

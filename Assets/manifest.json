@@ -1,0 +1,140 @@
+{
+  "clips": {
+    "blink": {
+      "frames": 1,
+      "width": 137,
+      "height": 200
+    },
+    "bumpLeftRight": {
+      "frames": 6,
+      "width": 137,
+      "height": 200
+    },
+    "bumpUpDown": {
+      "frames": 7,
+      "width": 137,
+      "height": 200
+    },
+    "crazy1": {
+      "frames": 56,
+      "width": 137,
+      "height": 200
+    },
+    "crazy2": {
+      "frames": 51,
+      "width": 137,
+      "height": 200
+    },
+    "eatBrownDonut": {
+      "frames": 41,
+      "width": 137,
+      "height": 200
+    },
+    "eatOrangeDonut": {
+      "frames": 41,
+      "width": 137,
+      "height": 200
+    },
+    "eatPinkDonut": {
+      "frames": 41,
+      "width": 137,
+      "height": 200
+    },
+    "explode": {
+      "frames": 24,
+      "width": 137,
+      "height": 200
+    },
+    "laugh": {
+      "frames": 33,
+      "width": 137,
+      "height": 200
+    },
+    "laughGiggle": {
+      "frames": 36,
+      "width": 137,
+      "height": 200
+    },
+    "laughGuffaw": {
+      "frames": 51,
+      "width": 137,
+      "height": 200
+    },
+    "listen": {
+      "frames": 1,
+      "width": 137,
+      "height": 200
+    },
+    "lookLeftRight": {
+      "frames": 17,
+      "width": 137,
+      "height": 200
+    },
+    "multiply": {
+      "frames": 10,
+      "width": 137,
+      "height": 200
+    },
+    "needle": {
+      "frames": 51,
+      "width": 320,
+      "height": 480
+    },
+    "sway": {
+      "frames": 21,
+      "width": 137,
+      "height": 200
+    },
+    "talk": {
+      "frames": 16,
+      "width": 137,
+      "height": 200
+    }
+  },
+  "sounds": [
+    "crazy_1.wav",
+    "crazy_1_alt.wav",
+    "crazy_1_alt2.wav",
+    "eat1.wav",
+    "eat2.wav",
+    "explode.wav",
+    "explode2.wav",
+    "krohotanje.wav",
+    "laugh.wav",
+    "laugh2.wav",
+    "laugh3.wav",
+    "laught.wav",
+    "multiply.wav",
+    "smeh.wav",
+    "smeh2.wav",
+    "smeh3.wav"
+  ],
+  "ui": [
+    "RecButton0.png",
+    "RecButton0@2x.png",
+    "RecButton1.png",
+    "RecButton1@2x.png",
+    "RecButton2.png",
+    "RecButton2@2x.png",
+    "RecButton3.png",
+    "RecButton3@2x.png",
+    "bacteriaBackground.png",
+    "gumb-donut-60.png",
+    "gumb-donut-60@2x.png",
+    "gumb-donut2-60.png",
+    "gumb-donut2-60@2x.png",
+    "gumb-pill-60.png",
+    "gumb-pill-60@2x.png",
+    "iconBacteria-114.png",
+    "iconBacteria-29.png",
+    "iconBacteria-50.png",
+    "iconBacteria-57.png",
+    "iconBacteria-58.png",
+    "iconBacteria-72.png",
+    "injection-60.png",
+    "injection-60@2x.png",
+    "lucka.png",
+    "pill-50.png",
+    "pill-50@2x.png"
+  ]
+}
