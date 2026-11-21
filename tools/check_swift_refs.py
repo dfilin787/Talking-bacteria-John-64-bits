@@ -66,6 +66,15 @@ def main():
         "UnsafeBufferPointer", "UnsafeMutableBufferPointer", "UnsafeRawBufferPointer",
         "CharacterSet", "URL", "URLSession", "NotificationCenter", "UserDefaults",
         "IndexSet", "DateFormatter", "NSAttributedString", "NSMutableAttributedString",
+        "UILongPressGestureRecognizer", "ObjectIdentifier", "UUID",
+        "AVAssetWriter", "AVAssetWriterInput", "AVAssetWriterInputPixelBufferAdaptor",
+        "AVAudioTime", "AVAudioFramePosition", "AVVideoCodecType",
+        "CMTime", "CMTimeCompare", "CMTimeSubtract", "CMTimeMake",
+        "CVPixelBuffer", "CVPixelBufferPool", "CVPixelBufferGetBaseAddress",
+        "CVPixelBufferGetBytesPerRow", "CVPixelBufferGetHeight", "CVPixelBufferGetWidth",
+        "CVPixelBufferLockBaseAddress", "CVPixelBufferUnlockBaseAddress",
+        "CVPixelBufferPoolCreatePixelBuffer", "CGContext", "CGColorSpaceCreateDeviceRGB",
+        "PHPhotoLibrary", "PHAssetChangeRequest", "PHAsset",
     }
     for name in sorted(instantiated - types - known_system):
         problems.append("тип %s используется, но не объявлен в проекте" % name)

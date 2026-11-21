@@ -59,7 +59,9 @@ extension UIImage {
 
 /// Все клипы персонажа. Соответствуют папкам из оригинала один в один.
 enum ClipName {
-    static let idleBase = "listen"
+    /// Настоящий покой — покачивание `sway` (21 кадр). `listen` и `blink`
+    /// в оригинале однокадровые: это поза прослушки и моргание, а не idle.
+    static let idleBase = "sway"
     static let blink = "blink"
     static let sway = "sway"
     static let lookLeftRight = "lookLeftRight"
