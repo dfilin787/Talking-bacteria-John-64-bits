@@ -28,8 +28,6 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Джон повторяет то, что вы скажете. Запись никуда не отправляется и остаётся на устройстве.</string>
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Джон сохраняет снятые ролики в ваши Фото.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

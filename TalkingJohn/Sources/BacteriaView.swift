@@ -142,16 +142,13 @@ final class BacteriaView: UIView {
         let advance = Int(accumulated / frameDuration)
         accumulated -= Double(advance) * frameDuration
 
-        // Проход закончился, звук ещё звучит: продолжаем крутить клип,
-        // но новые проходы уже не считаем — решение будет на следующей границе.
+        // Проход закончился, звук ещё звучит: держим ПОСЛЕДНИЙ кадр (не крутим
+        // клип заново — иначе еда/смех проигрывались дважды), ждём конца звука.
         if holdingForSound {
             if syncGate?() == true {
                 finishPlayback()
-                return
             }
-            holdingForSound = false
-            frameIndex = 0
-            frameSound?(0)
+            return
         }
 
         var finished = false

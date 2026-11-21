@@ -29,18 +29,15 @@ final class GameViewController: UIViewController {
     private var bacteriaViews: [BacteriaView] = []
     private let needleView = BacteriaView()
     private let pillView = UIImageView()
-    private let recordButton = UIButton(type: .custom)
     private let donutButton = UIButton(type: .custom)
     private let injectionButton = UIButton(type: .custom)
     private let pillButton = UIButton(type: .custom)
-    private var recordFrames: [UIImage] = []
 
     private let audioEngine = AVAudioEngine()
     private let audioFormat = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
     private let queue = DispatchQueue(label: "john.audio", qos: .userInitiated)
     private var effects: EffectPlayer?
     private var recorder: VoiceRecorder!
-    private var sceneRecorder: SceneRecorder!
     /// Бактерия, которая слушает/повторяет голос (долгое нажатие на камеру).
     private var talker: BacteriaView?
     /// Счётчик толчков по бактерии: смех не моментальный, а после 2-3 толчков,
@@ -51,8 +48,6 @@ final class GameViewController: UIViewController {
     private var stageFrame: CGRect = .zero
 
     private var idleTimer: Timer?
-    private var recordAnimationTimer: Timer?
-    private var recordFrameIndex = 0
     /// Какие бактерии сейчас заняты «эксклюзивной» реакцией (еда/размножение/
     /// смерть/говорит). Только они не принимают новые взаимодействия.
     /// Смех и idle-кивки НЕ блокируют: во время них бактерию можно трогать,
@@ -130,27 +125,26 @@ final class GameViewController: UIViewController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        if sceneRecorder.isRecording { sceneRecorder.stop() }
         recorder.stopEverything()
         stopEffects()
         stopIdle()
         stopMotion()
-        stopRecordAnimation()
         stopPillPhysics()
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         startIdle()
+        // после любого исчезновения вида прослушка могла быть остановлена —
+        // возвращаем постоянный повтор голоса
+        startAlwaysListening()
     }
 
     func pauseForBackground() {
-        if sceneRecorder.isRecording { sceneRecorder.cancel() }
         recorder.stopEverything()
         stopEffects()
         stopIdle()
         stopMotion()
-        stopRecordAnimation()
         stopPillPhysics()
         bacteriaViews.forEach { $0.stopAndReset() }
         needleView.stopAndReset()
@@ -312,13 +306,8 @@ final class GameViewController: UIViewController {
     }
 
     private func buildControls() {
-        recordFrames = (0...3).compactMap { uiImage("RecButton\($0)") }
         // backgroundImage растягивается на весь фрейм кнопки без insets —
         // иконка реально крупная, а не мелкая внутри большой кнопки
-        recordButton.setBackgroundImage(recordFrames.first, for: .normal)
-        recordButton.addTarget(self, action: #selector(toggleRecording), for: .touchUpInside)
-        recordButton.accessibilityLabel = "Записать голос"
-        view.addSubview(recordButton)
 
         configureItem(donutButton, image: "gumb-donut-60", action: #selector(feedDonut), label: "Пончик")
         configureItem(injectionButton, image: "injection-60", action: #selector(giveInjection), label: "Шприц")
@@ -381,7 +370,6 @@ final class GameViewController: UIViewController {
         let side = max(96 * scale, 84)
         let margin: CGFloat = 8
         let topSafe = max(view.safeAreaInsets.top, 12)
-        recordButton.frame = CGRect(x: margin, y: topSafe, width: side, height: side)
 
         // правый столбик по центру вертикали, с равным шагом
         let gap = side + 16
@@ -416,10 +404,6 @@ final class GameViewController: UIViewController {
         recorder = VoiceRecorder(engine: audioEngine, graphQueue: queue, format: audioFormat)
         recorder.onStateChanged = { [weak self] state in
             self?.handleRecorderState(state)
-        }
-        sceneRecorder = SceneRecorder(engine: audioEngine, graphQueue: queue)
-        sceneRecorder.onStateChanged = { [weak self] state in
-            self?.handleSceneRecorderState(state)
         }
     }
 
@@ -1121,32 +1105,14 @@ final class GameViewController: UIViewController {
 
     /// Кнопка-камера отвечает ТОЛЬКО за запись экрана (как в оригинале).
     /// Повтор голоса при этом не трогаем — он всегда активен отдельно.
-    @objc private func toggleRecording() {
-        if sceneRecorder.isRecording {
-            sceneRecorder.stop()
-            return
-        }
-        requestMicrophone { [weak self] granted in
-            guard let self, granted else { return }
-            self.queue.async { [weak self] in
-                guard let self else { return }
-                do {
-                    let session = AVAudioSession.sharedInstance()
-                    try session.setCategory(.playAndRecord, mode: .default,
-                                            options: [.defaultToSpeaker, .allowBluetoothA2DP])
-                    try session.setActive(true)
-                    if !self.audioEngine.isRunning { try self.audioEngine.start() }
-                } catch { return }
-                DispatchQueue.main.async { self.sceneRecorder.start(capturing: self.stageView) }
-            }
-        }
-    }
 
     /// Постоянная прослушка: стартуем после разрешения и перезапускаем после
     /// каждого повтора — бактерия всегда слушает и повторяет за пользователем.
     private func startAlwaysListening() {
         requestMicrophone { [weak self] granted in
             guard let self, granted else { return }
+            // вся работа с графом — на одной очереди, последовательно:
+            // сессия → запуск движка → tap. Без гонок с configureAudio.
             self.queue.async { [weak self] in
                 guard let self else { return }
                 do {
@@ -1154,9 +1120,8 @@ final class GameViewController: UIViewController {
                     try session.setCategory(.playAndRecord, mode: .default,
                                             options: [.defaultToSpeaker, .allowBluetoothA2DP])
                     try session.setActive(true)
-                    if !self.audioEngine.isRunning { try self.audioEngine.start() }
                 } catch { return }
-                DispatchQueue.main.async { self.recorder.beginListening() }
+                self.recorder.beginListening()
             }
         }
     }
@@ -1164,17 +1129,6 @@ final class GameViewController: UIViewController {
 
 
 
-    private func handleSceneRecorderState(_ state: SceneRecorder.State) {
-        switch state {
-        case .recording:
-            startRecordAnimation()
-        case .saving, .idle:
-            stopRecordAnimation()
-        case .failed(let message):
-            stopRecordAnimation()
-            NSLog("Запись экрана: \(message)")
-        }
-    }
 
     private func requestMicrophone(_ completion: @escaping (Bool) -> Void) {
         if #available(iOS 17.0, *) {
@@ -1192,18 +1146,21 @@ final class GameViewController: UIViewController {
         switch state {
         case .idle:
             finishVoiceRepeat()
-            // постоянная прослушка: сразу слушаем снова
-            startAlwaysListening()
+            // постоянная прослушка с паузой, чтобы idle-анимации были видны
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                self?.startAlwaysListening()
+            }
         case .listening:
-            // слушает одна (случайная) бактерия, остальные продолжают жить;
-            // геймплей НЕ блокируем — колония ездит и реагирует как обычно
-            let listener = bacteriaViews.randomElement()
+            // слушает одна свободная бактерия; занятую (смех/еда/смерть) не
+            // трогаем, иначе прослушка перезаписывала её анимацию каждые ~1.4 с
+            let listener = bacteriaViews.filter({ !isBacteriaBusy($0) }).randomElement()
             talker = listener
             if let listener, let listen = ClipLibrary.shared.clip(ClipName.listen) {
                 listener.play(listen, repeats: 0, fps: 8)
             }
         case .speaking:
-            if let talker, let talk = ClipLibrary.shared.clip(ClipName.talk) {
+            if let talker, bacteriaViews.contains(where: { $0 === talker }),
+               let talk = ClipLibrary.shared.clip(ClipName.talk) {
                 talker.play(talk, repeats: 0, fps: 14)
             }
         case .failed:
@@ -1223,32 +1180,7 @@ final class GameViewController: UIViewController {
         self.talker = nil
     }
 
-    /// Мигание кнопки записи изнутри кадрами RecButton — три прохода, как в
-    /// оригинале (не внешний кружок). Управление при этом не блокируется.
-    private func startRecordAnimation() {
-        stopRecordAnimation()
-        guard !recordFrames.isEmpty else { return }
-        recordFrameIndex = 0
-        var ticks = 0
-        let totalTicks = recordFrames.count * 3
-        recordAnimationTimer = Timer.scheduledTimer(withTimeInterval: 0.18, repeats: true) { [weak self] timer in
-            guard let self else { timer.invalidate(); return }
-            self.recordButton.setBackgroundImage(self.recordFrames[self.recordFrameIndex], for: .normal)
-            self.recordFrameIndex = (self.recordFrameIndex + 1) % self.recordFrames.count
-            ticks += 1
-            if ticks >= totalTicks {
-                timer.invalidate()
-                self.recordAnimationTimer = nil
-                self.recordButton.setBackgroundImage(self.recordFrames.first, for: .normal)
-            }
-        }
-    }
 
-    private func stopRecordAnimation() {
-        recordAnimationTimer?.invalidate()
-        recordAnimationTimer = nil
-        recordButton.setBackgroundImage(recordFrames.first, for: .normal)
-    }
 
     // MARK: - Мелочи
 
