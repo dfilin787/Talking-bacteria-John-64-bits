@@ -34,7 +34,6 @@ final class SceneRecorder: NSObject {
     private var audioSampleRate: Double = 44_100
     private var frameTimer: Timer?
     private weak var captureView: UIView?
-    private var audioFormat: AVAudioFormat?
     private let renderQueue = DispatchQueue(label: "john.scene.render", qos: .userInitiated)
 
     private(set) var state: State = .idle
@@ -92,13 +91,19 @@ final class SceneRecorder: NSObject {
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: videoInput, sourcePixelBufferAttributes: attrs)
 
-        // Звук с микшера: AAC, моно/стерео по формату узла.
+        // Звук с микшера пишем МОНО: makeSampleBuffer копирует только канал 0,
+        // а многоканальный byteCount читал за пределы первого канала и давал
+        // шум в ролике. Моно-формат тапа конвертирует микшер сам.
         let mixer = engine.mainMixerNode
-        let tapFormat = mixer.outputFormat(forBus: 0)
+        let mixerFormat = mixer.outputFormat(forBus: 0)
+        let sampleRate = mixerFormat.sampleRate > 0 ? mixerFormat.sampleRate : 44_100
+        guard let tapFormat = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1) else {
+            transition(.failed("Аудиоформат недоступен")); return
+        }
         let audioSettings: [String: Any] = [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: tapFormat.sampleRate > 0 ? tapFormat.sampleRate : 44_100,
-            AVNumberOfChannelsKey: max(1, Int(tapFormat.channelCount)),
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1,
             AVEncoderBitRateKey: 128_000
         ]
         let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
@@ -119,10 +124,13 @@ final class SceneRecorder: NSObject {
         self.pixelAdaptor = adaptor
         self.fileURL = url
         self.captureView = view
-        self.audioFormat = tapFormat
-        self.audioSampleRate = tapFormat.sampleRate > 0 ? tapFormat.sampleRate : 44_100
+        self.audioSampleRate = sampleRate
         self.audioAnchorSample = nil
-        self.startTime = nil
+        // startTime задаётся ОДИН раз здесь, до таймера и тапа: captureFrame
+        // (main) и writeAudio (renderQueue) только читают его — гонки нет.
+        let start = CMTime(seconds: CACurrentMediaTime(), preferredTimescale: 600)
+        self.startTime = start
+        writer.startSession(atSourceTime: start)
         self.lastFrameTime = .zero
         self.recordStartedAt = Date()
 
@@ -151,6 +159,7 @@ final class SceneRecorder: NSObject {
                         self.saveToPhotos(url: url)
                     } else {
                         self.cleanup(url: url)
+                        self.reset()
                         self.transition(.failed(writer.error?.localizedDescription ?? "Видео не собралось"))
                     }
                 }
@@ -188,10 +197,6 @@ final class SceneRecorder: NSObject {
 
         let now = CACurrentMediaTime()
         let time = CMTime(seconds: now, preferredTimescale: 600)
-        if startTime == nil {
-            startTime = time
-            writer?.startSession(atSourceTime: time)
-        }
         guard let start = startTime else { return }
         let pts = CMTimeSubtract(time, start)
         // не пишем два кадра с одним и тем же временем
@@ -320,6 +325,7 @@ final class SceneRecorder: NSObject {
                 guard let self else { return }
                 guard status == .authorized || status == .limited else {
                     self.cleanup(url: url)
+                    self.reset()
                     self.transition(.failed("Нет доступа к Фото"))
                     return
                 }
@@ -333,6 +339,7 @@ final class SceneRecorder: NSObject {
                             self.transition(.idle)
                             self.onSaved?()
                         } else {
+                            self.reset()
                             self.transition(.failed(error?.localizedDescription ?? "Не сохранилось"))
                         }
                     }

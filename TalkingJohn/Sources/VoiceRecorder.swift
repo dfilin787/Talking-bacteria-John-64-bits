@@ -43,7 +43,14 @@ final class VoiceRecorder {
     /// Сериализует обращения к графу движка: recorder и эффекты делят один AVAudioEngine.
     private let graphQueue: DispatchQueue
 
-    private var isCapturing = false
+    /// isCapturing пишется на главном потоке и читается на аудио-потоке —
+    /// защищаем локом, иначе формальная гонка на Bool.
+    private let captureLock = NSLock()
+    private var _isCapturing = false
+    private var isCapturing: Bool {
+        get { captureLock.lock(); defer { captureLock.unlock() }; return _isCapturing }
+        set { captureLock.lock(); _isCapturing = newValue; captureLock.unlock() }
+    }
     private var captureStartedAt = Date()
     private var lastVoiceAt = Date()
     private var silenceStopScheduled = false

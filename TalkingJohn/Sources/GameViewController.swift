@@ -86,7 +86,6 @@ final class GameViewController: UIViewController {
     private var motionLastTimestamp: TimeInterval = 0
     /// Какая бактерия сейчас в руке (индекс в bacteriaViews) и куда её тащат.
     private var draggedBacteria: BacteriaView?
-    private var dragOffset: CGPoint = .zero
     private var dragStartPoint: CGPoint = .zero
     private var dragLastPoint: CGPoint = .zero
     private var dragLastTime: TimeInterval = 0
@@ -159,6 +158,12 @@ final class GameViewController: UIViewController {
         needleView.isHidden = true
         draggedBacteria = nil
         busyBacteria.removeAll()
+        talker = nil
+        // stopAndReset сбрасывает клипы и выбрасывает их completion-замыкания,
+        // а именно в них декрементятся eatingCount/pendingChildren. Без сброса
+        // счётчики утекают и пончик/размножение молча умирают до перезапуска.
+        eatingCount = 0
+        pendingChildren = 0
         isBusy = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
@@ -176,7 +181,14 @@ final class GameViewController: UIViewController {
                 NSLog("Не удалось вернуть аудиосессию: \(error.localizedDescription)")
             }
         }
-        if recorder.state == .idle { startIdle() }
+        // после фона клипы бактерий остановлены (stopAndReset в pause) —
+        // возвращаем всем свободным покачивание, иначе колония стоит кадром
+        if recorder.state == .idle {
+            startIdle()
+            for view in bacteriaViews where !isBacteriaBusy(view) {
+                resumeIdle(for: view)
+            }
+        }
     }
 
     private func stopEffects() {
@@ -804,12 +816,6 @@ final class GameViewController: UIViewController {
         let x = min(max(point.x, field.minX + halfW), field.maxX - halfW)
         let y = min(max(point.y, field.minY + halfH), field.maxY - halfH)
         return CGPoint(x: x, y: y)
-    }
-
-    private func setBacteriaVelocity(_ velocity: CGPoint, for bacteria: BacteriaView) {
-        guard let index = bacteriaViews.firstIndex(where: { $0 === bacteria }),
-              index < bacteriaVelocities.count else { return }
-        bacteriaVelocities[index] = velocity
     }
 
     private func flickPillTowardBacteria() {
