@@ -40,6 +40,7 @@ final class GameViewController: UIViewController {
     private let queue = DispatchQueue(label: "john.audio", qos: .userInitiated)
     private var effects: EffectPlayer?
     private var recorder: VoiceRecorder!
+    private var sceneRecorder: SceneRecorder!
     /// Бактерия, которая слушает/повторяет голос (долгое нажатие на камеру).
     private var talker: BacteriaView?
     /// Счётчик толчков по бактерии: смех не моментальный, а после 2-3 толчков,
@@ -52,7 +53,6 @@ final class GameViewController: UIViewController {
     private var idleTimer: Timer?
     private var recordAnimationTimer: Timer?
     private var recordFrameIndex = 0
-    private var isBusy = false
     /// Какие бактерии сейчас заняты «эксклюзивной» реакцией (еда/размножение/
     /// смерть/говорит). Только они не принимают новые взаимодействия.
     /// Смех и idle-кивки НЕ блокируют: во время них бактерию можно трогать,
@@ -116,8 +116,8 @@ final class GameViewController: UIViewController {
         configureRecorder()
         applyLayout()
         startIdle()
-        // разрешение на микрофон просим сразу при старте, как в оригинале
-        requestMicrophone { _ in }
+        // повтор голоса всегда активен: слушаем микро постоянно
+        startAlwaysListening()
     }
 
     override var prefersStatusBarHidden: Bool { true }
@@ -130,6 +130,7 @@ final class GameViewController: UIViewController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        if sceneRecorder.isRecording { sceneRecorder.stop() }
         recorder.stopEverything()
         stopEffects()
         stopIdle()
@@ -140,10 +141,11 @@ final class GameViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        if recorder.state == .idle { startIdle() }
+        startIdle()
     }
 
     func pauseForBackground() {
+        if sceneRecorder.isRecording { sceneRecorder.cancel() }
         recorder.stopEverything()
         stopEffects()
         stopIdle()
@@ -161,7 +163,6 @@ final class GameViewController: UIViewController {
         // счётчики утекают и пончик/размножение молча умирают до перезапуска.
         eatingCount = 0
         pendingChildren = 0
-        isBusy = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
@@ -180,12 +181,11 @@ final class GameViewController: UIViewController {
         }
         // после фона клипы бактерий остановлены (stopAndReset в pause) —
         // возвращаем всем свободным покачивание, иначе колония стоит кадром
-        if recorder.state == .idle {
-            startIdle()
-            for view in bacteriaViews where !isBacteriaBusy(view) {
-                resumeIdle(for: view)
-            }
+        startIdle()
+        for view in bacteriaViews where !isBacteriaBusy(view) {
+            resumeIdle(for: view)
         }
+        startAlwaysListening()
     }
 
     private func stopEffects() {
@@ -417,12 +417,16 @@ final class GameViewController: UIViewController {
         recorder.onStateChanged = { [weak self] state in
             self?.handleRecorderState(state)
         }
+        sceneRecorder = SceneRecorder(engine: audioEngine, graphQueue: queue)
+        sceneRecorder.onStateChanged = { [weak self] state in
+            self?.handleSceneRecorderState(state)
+        }
     }
 
     // MARK: - Реакции
 
     @objc private func handleStageTap(_ gesture: UITapGestureRecognizer) {
-        guard recorder.state == .idle else { return }
+        
         let point = gesture.location(in: stageView)
 
         if pillOnScreen, pillView.frame.insetBy(dx: -12, dy: -12).contains(point) {
@@ -466,7 +470,7 @@ final class GameViewController: UIViewController {
     }
 
     private func checkLaughAfterPokes() {
-        guard recorder.state == .idle else { return }
+        
         var anyPending = false
         for (index, bacteria) in bacteriaViews.enumerated() {
             let id = ObjectIdentifier(bacteria)
@@ -495,7 +499,7 @@ final class GameViewController: UIViewController {
     /// не больше двух бактерий (как в оригинале — чтобы не превысить лимит 6).
     /// После 6 бактерий кнопка сереет.
     @objc private func feedDonut() {
-        guard recorder.state == .idle, eatingCount < maxEating,
+        guard eatingCount < maxEating,
               bacteriaViews.count + pendingChildren < maxBacteria,
               let reaction = eatPool.next() else { return }
         // кормим случайную свободную бактерию, а не всегда первую
@@ -544,7 +548,7 @@ final class GameViewController: UIViewController {
     /// Таблетка не одноразовая: живёт, пока с ней взаимодействуют, и исчезает
     /// только после долгого бездействия. Повторный тап по кнопке не плодит новые.
     @objc private func givePill() {
-        guard recorder.state == .idle else { return }
+        
         if pillOnScreen {
             pillLastInteraction = Date()
             return
@@ -576,7 +580,7 @@ final class GameViewController: UIViewController {
         // реакция неэксклюзивная — во время неё бактерию можно трогать дальше
         let free = bacteriaViews.filter { !isBacteriaBusy($0) }
         DispatchQueue.main.asyncAfter(deadline: .now() + stabDelay) { [weak self] in
-            guard let self, self.recorder.state == .idle else { return }
+            guard let self else { return }
             for bacteria in free where self.bacteriaViews.contains(where: { $0 === bacteria })
                 && !self.isBacteriaBusy(bacteria) {
                 if let reaction = self.injectionPool.next() {
@@ -705,7 +709,7 @@ final class GameViewController: UIViewController {
                 self.stopVoice(for: target)
                 completion?()
                 // бактерия снова в покое, если не идёт запись и она ещё жива
-                if self.recorder.state == .idle, self.bacteriaViews.contains(where: { $0 === target }) {
+                if self.bacteriaViews.contains(where: { $0 === target }) {
                     self.resumeIdle(for: target)
                 }
             }
@@ -726,7 +730,7 @@ final class GameViewController: UIViewController {
 
     /// Возвращает одну бактерию к покачиванию, не трогая остальных.
     private func resumeIdle(for view: BacteriaView) {
-        guard !isBacteriaBusy(view), recorder.state == .idle else { return }
+        guard !isBacteriaBusy(view) else { return }
         if let base = ClipLibrary.shared.clip(ClipName.idleBase) {
             view.play(base, repeats: 0, fps: 8)
         }
@@ -1073,7 +1077,7 @@ final class GameViewController: UIViewController {
     /// работает постоянно, а раз в пару секунд случайная бактерия делает
     /// маленькое действие (моргание/взгляд/качание) — как в оригинале.
     private func startIdle() {
-        guard recorder.state == .idle else { return }
+        
         if let base = ClipLibrary.shared.clip(ClipName.idleBase) {
             for view in bacteriaViews where !isBacteriaBusy(view) {
                 view.play(base, repeats: 0, fps: 8)
@@ -1100,7 +1104,7 @@ final class GameViewController: UIViewController {
     }
 
     private func playRandomIdle() {
-        guard recorder.state == .idle else { return }
+        
         // кивки и осмотр — основа idle-поведения; НЕ блокируют взаимодействие:
         // во время кивка бактерию можно трогать, толкать и колоть
         let names = [ClipName.bumpUpDown, ClipName.bumpLeftRight,
@@ -1113,38 +1117,64 @@ final class GameViewController: UIViewController {
         })
     }
 
-    // MARK: - Запись голоса (кнопка-камера)
+    // MARK: - Запись экрана (кнопка-камера) и постоянный повтор голоса
 
-    /// Тап по камере — повтор голоса (как в оригинале Talking): слушает → говорит.
+    /// Кнопка-камера отвечает ТОЛЬКО за запись экрана (как в оригинале).
+    /// Повтор голоса при этом не трогаем — он всегда активен отдельно.
     @objc private func toggleRecording() {
-        switch recorder.state {
-        case .listening:
-            recorder.stopListeningAndSpeak()
-        case .speaking:
-            recorder.stopSpeaking()
-        case .idle, .failed:
-            requestMicrophone { [weak self] granted in
-                guard let self, granted else { return }
-                // глушим только idle-таймер, мотор езды остальных не трогаем
-                self.idleTimer?.invalidate()
-                self.queue.async { [weak self] in
-                    guard let self else { return }
-                    self.effects?.stopAll()
-                    do {
-                        let session = AVAudioSession.sharedInstance()
-                        try session.setCategory(.playAndRecord, mode: .default,
-                                                options: [.defaultToSpeaker, .allowBluetoothA2DP])
-                        try session.setActive(true)
-                        if !self.audioEngine.isRunning { try self.audioEngine.start() }
-                    } catch { return }
-                    DispatchQueue.main.async { self.recorder.beginListening() }
-                }
+        if sceneRecorder.isRecording {
+            sceneRecorder.stop()
+            return
+        }
+        requestMicrophone { [weak self] granted in
+            guard let self, granted else { return }
+            self.queue.async { [weak self] in
+                guard let self else { return }
+                do {
+                    let session = AVAudioSession.sharedInstance()
+                    try session.setCategory(.playAndRecord, mode: .default,
+                                            options: [.defaultToSpeaker, .allowBluetoothA2DP])
+                    try session.setActive(true)
+                    if !self.audioEngine.isRunning { try self.audioEngine.start() }
+                } catch { return }
+                DispatchQueue.main.async { self.sceneRecorder.start(capturing: self.stageView) }
+            }
+        }
+    }
+
+    /// Постоянная прослушка: стартуем после разрешения и перезапускаем после
+    /// каждого повтора — бактерия всегда слушает и повторяет за пользователем.
+    private func startAlwaysListening() {
+        requestMicrophone { [weak self] granted in
+            guard let self, granted else { return }
+            self.queue.async { [weak self] in
+                guard let self else { return }
+                do {
+                    let session = AVAudioSession.sharedInstance()
+                    try session.setCategory(.playAndRecord, mode: .default,
+                                            options: [.defaultToSpeaker, .allowBluetoothA2DP])
+                    try session.setActive(true)
+                    if !self.audioEngine.isRunning { try self.audioEngine.start() }
+                } catch { return }
+                DispatchQueue.main.async { self.recorder.beginListening() }
             }
         }
     }
 
 
 
+
+    private func handleSceneRecorderState(_ state: SceneRecorder.State) {
+        switch state {
+        case .recording:
+            startRecordAnimation()
+        case .saving, .idle:
+            stopRecordAnimation()
+        case .failed(let message):
+            stopRecordAnimation()
+            NSLog("Запись экрана: \(message)")
+        }
+    }
 
     private func requestMicrophone(_ completion: @escaping (Bool) -> Void) {
         if #available(iOS 17.0, *) {
@@ -1161,41 +1191,36 @@ final class GameViewController: UIViewController {
     private func handleRecorderState(_ state: VoiceRecorder.State) {
         switch state {
         case .idle:
-            stopRecordAnimation()
             finishVoiceRepeat()
+            // постоянная прослушка: сразу слушаем снова
+            startAlwaysListening()
         case .listening:
-            isBusy = true
-            idleTimer?.invalidate()
-            // слушает одна (случайная) бактерия, остальные продолжают жить
+            // слушает одна (случайная) бактерия, остальные продолжают жить;
+            // геймплей НЕ блокируем — колония ездит и реагирует как обычно
             let listener = bacteriaViews.randomElement()
             talker = listener
-            if let listener {
-                busyBacteria.insert(ObjectIdentifier(listener))
-                if let listen = ClipLibrary.shared.clip(ClipName.listen) {
-                    listener.play(listen, repeats: 0, fps: 8)
-                }
+            if let listener, let listen = ClipLibrary.shared.clip(ClipName.listen) {
+                listener.play(listen, repeats: 0, fps: 8)
             }
-            startRecordAnimation()
         case .speaking:
-            stopRecordAnimation()
             if let talker, let talk = ClipLibrary.shared.clip(ClipName.talk) {
                 talker.play(talk, repeats: 0, fps: 14)
             }
         case .failed:
-            stopRecordAnimation()
             finishVoiceRepeat()
+            // через паузу пробуем снова (микрофон мог быть занят)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                self?.startAlwaysListening()
+            }
         }
     }
 
     /// Возврат после повтора голоса: говорящий возвращается в колонию.
     private func finishVoiceRepeat() {
         if let talker {
-            busyBacteria.remove(ObjectIdentifier(talker))
             resumeIdle(for: talker)
         }
         self.talker = nil
-        isBusy = false
-        startIdle()
     }
 
     /// Мигание кнопки записи изнутри кадрами RecButton — три прохода, как в
@@ -1261,7 +1286,7 @@ extension GameViewController: UIGestureRecognizerDelegate {
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard gestureRecognizer is UIPanGestureRecognizer else { return true }
-        guard recorder.state == .idle else { return false }
+        
         let point = gestureRecognizer.location(in: stageView)
         // пан начинается, только если схватили таблетку или бактерию
         if pillOnScreen, pillView.frame.insetBy(dx: -24, dy: -24).contains(point) { return true }
