@@ -45,8 +45,6 @@ final class GameViewController: UIViewController {
     private var talker: BacteriaView?
     /// Счётчик толчков по бактерии: смех не моментальный, а после 2-3 толчков,
     /// когда бактерия остановится (как lastLaughTickle/isLaughing в оригинале).
-    private var pokeCounts: [ObjectIdentifier: Int] = [:]
-    private var laughCheckTimer: Timer?
 
     private var scale: CGFloat = 1
     private var previousScale: CGFloat = 0
@@ -76,8 +74,8 @@ final class GameViewController: UIViewController {
     /// Сколько бактерий сейчас едят/делятся — не больше 2 одновременно (лимит 6).
     private var eatingCount = 0
     private let maxEating = 2
-    /// Кулдаун шприца — нельзя колоть бесконечно.
-    private var injectionBusy = false
+    /// Кулдаун шприца по времени — нельзя колоть бесконечно, флаг не залипает.
+    private var lastInjectionAt: TimeInterval = 0
 
     /// Бактерии сами немного ездят по экрану и их можно толкать пальцем,
     /// как таблетку. Скорость в дизайн-точках в секунду.
@@ -302,8 +300,9 @@ final class GameViewController: UIViewController {
 
     private func buildControls() {
         recordFrames = (0...3).compactMap { uiImage("RecButton\($0)") }
-        recordButton.setImage(recordFrames.first, for: .normal)
-        recordButton.imageView?.contentMode = .scaleToFill
+        // backgroundImage растягивается на весь фрейм кнопки без insets —
+        // иконка реально крупная, а не мелкая внутри большой кнопки
+        recordButton.setBackgroundImage(recordFrames.first, for: .normal)
         recordButton.addTarget(self, action: #selector(toggleRecording), for: .touchUpInside)
         recordButton.accessibilityLabel = "Записать голос"
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleRecordLongPress(_:)))
@@ -319,8 +318,7 @@ final class GameViewController: UIViewController {
     }
 
     private func configureItem(_ button: UIButton, image: String, action: Selector, label: String) {
-        button.setImage(uiImage(image), for: .normal)
-        button.imageView?.contentMode = .scaleToFill
+        button.setBackgroundImage(uiImage(image), for: .normal)
         button.addTarget(self, action: action, for: .touchUpInside)
         button.accessibilityLabel = label
         button.addTarget(self, action: #selector(itemTouchDown(_:)), for: .touchDown)
@@ -430,19 +428,16 @@ final class GameViewController: UIViewController {
             flickPillTowardBacteria()
             return
         }
-        // Тап по бактерии = толчок. Смех приходит не сразу, а после нескольких
-        // толчков, когда бактерия остановится (как в оригинале).
+        // Тап по бактерии = смерть (лопается пузырями), как ты просил.
+        // Смех от толчка остаётся только на свайпе-флинге, не на тапе.
         guard let target = bacteriaViews.last(where: { $0.frame.contains(point) }),
               !isBacteriaBusy(target) else { return }
-        pokeBacteria(target)
+        popBacteria(target)
     }
 
-    /// Толчок бактерии: копим счётчик, смех запускается отложенно когда
-    /// бактерия замедлится. Смех заразный — расходится на соседей.
+    /// Толчок бактерии свайпом: физический пинок + заразный смех сразу.
+    /// Никакого отложенного «когда остановится» — смех только от реального толчка.
     private func pokeBacteria(_ target: BacteriaView, kickVelocity: CGPoint? = nil) {
-        let id = ObjectIdentifier(target)
-        pokeCounts[id, default: 0] += 1
-        // толкаем бактерию физически (небольшой пинок, не улёт)
         if let index = bacteriaViews.firstIndex(where: { $0 === target }) {
             if let kickVelocity {
                 bacteriaVelocities[index] = kickVelocity
@@ -452,39 +447,8 @@ final class GameViewController: UIViewController {
                 bacteriaVelocities[index] = CGPoint(x: cos(angle) * kick, y: sin(angle) * kick)
             }
         }
-        scheduleLaughCheck()
-    }
-
-    /// Раз в 0.4 с проверяем: толканная бактерия остановилась и накопилось
-    /// ≥2 толчков → запускаем заразный смех.
-    private func scheduleLaughCheck() {
-        guard laughCheckTimer == nil else { return }
-        laughCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
-            self?.checkLaughAfterPokes()
-        }
-    }
-
-    private func checkLaughAfterPokes() {
-        guard recorder.state == .idle else { return }
-        var anyPending = false
-        for (index, bacteria) in bacteriaViews.enumerated() {
-            let id = ObjectIdentifier(bacteria)
-            guard let count = pokeCounts[id], count >= 2 else {
-                if pokeCounts[id] != nil { anyPending = true }
-                continue
-            }
-            if isBacteriaBusy(bacteria) { anyPending = true; continue }
-            let speed = index < bacteriaVelocities.count
-                ? hypot(bacteriaVelocities[index].x, bacteriaVelocities[index].y) : 0
-            if speed > 40 * scale { anyPending = true; continue }
-            // остановилась после нескольких толчков → смеётся и заражает соседей
-            pokeCounts[id] = nil
-            spreadLaugh(from: bacteria)
-        }
-        if !anyPending && pokeCounts.isEmpty {
-            laughCheckTimer?.invalidate()
-            laughCheckTimer = nil
-        }
+        // смех только от толчка, заразный
+        spreadLaugh(from: target)
     }
 
     /// Заразный смех: источник + все свободные соседи (spreadLaughAnimationWithSource:).
@@ -564,10 +528,12 @@ final class GameViewController: UIViewController {
     }
 
     /// Шприц: оверлей `needle`, реакция всех бактерий ХОРОМ (звук от каждой),
-    /// старт в момент укола (середина клипа иглы), кулдаун до конца реакции.
+    /// старт в момент укола (середина клипа иглы). Кулдаун по времени — простой
+    /// и не залипает (в отличие от флага).
     @objc private func giveInjection() {
-        guard recorder.state == .idle, !injectionBusy else { return }
-        injectionBusy = true
+        let now = CACurrentMediaTime()
+        guard now - lastInjectionAt > 2.0 else { return }
+        lastInjectionAt = now
         removePill()
         let needle = ClipLibrary.shared.clip(ClipName.needle)
         // момент укола — примерно середина клипа иглы
@@ -583,20 +549,14 @@ final class GameViewController: UIViewController {
         }
         // все свободные бактерии реагируют хором в момент укола
         let free = bacteriaViews.filter { !isBacteriaBusy($0) }
-        let reactionDuration = 56.0 / 16.0 // crazy1 ~56 кадров @16fps
         DispatchQueue.main.asyncAfter(deadline: .now() + stabDelay) { [weak self] in
-            guard let self else { return }
+            guard let self, self.recorder.state == .idle else { return }
             for bacteria in free where self.bacteriaViews.contains(where: { $0 === bacteria })
                 && !self.isBacteriaBusy(bacteria) {
                 if let reaction = self.injectionPool.next() {
                     self.perform(reaction, on: bacteria)
                 }
             }
-        }
-        // кулдаун: игла + реакция
-        let cooldown = stabDelay + reactionDuration + 0.3
-        DispatchQueue.main.asyncAfter(deadline: .now() + cooldown) { [weak self] in
-            self?.injectionBusy = false
         }
     }
 
@@ -1075,8 +1035,8 @@ final class GameViewController: UIViewController {
 
     private func scheduleIdleAction() {
         idleTimer?.invalidate()
-        // редкие мелкие действия на фоне постоянного покачивания — не «кивает всегда»
-        let delay = Double.random(in: 6...12)
+        // idle-действия (кивки/взгляд) заметно часто, как в оригинале
+        let delay = Double.random(in: 2.5...5.0)
         idleTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             self?.playRandomIdle()
             self?.scheduleIdleAction()
@@ -1085,9 +1045,9 @@ final class GameViewController: UIViewController {
 
     private func playRandomIdle() {
         guard recorder.state == .idle else { return }
-        // иногда осматривается или кивает; основу покоя составляет sway
-        let names = [ClipName.lookLeftRight, ClipName.lookLeftRight,
-                     ClipName.bumpLeftRight, ClipName.bumpUpDown]
+        // кивки и осмотр — основа idle-поведения
+        let names = [ClipName.bumpUpDown, ClipName.bumpLeftRight,
+                     ClipName.bumpUpDown, ClipName.lookLeftRight]
         guard let clip = ClipLibrary.shared.random(from: names),
               let target = bacteriaViews.filter({ !isBacteriaBusy($0) }).randomElement() else { return }
         busyBacteria.insert(ObjectIdentifier(target))
@@ -1254,13 +1214,13 @@ final class GameViewController: UIViewController {
         let totalTicks = recordFrames.count * 3
         recordAnimationTimer = Timer.scheduledTimer(withTimeInterval: 0.18, repeats: true) { [weak self] timer in
             guard let self else { timer.invalidate(); return }
-            self.recordButton.setImage(self.recordFrames[self.recordFrameIndex], for: .normal)
+            self.recordButton.setBackgroundImage(self.recordFrames[self.recordFrameIndex], for: .normal)
             self.recordFrameIndex = (self.recordFrameIndex + 1) % self.recordFrames.count
             ticks += 1
             if ticks >= totalTicks {
                 timer.invalidate()
                 self.recordAnimationTimer = nil
-                self.recordButton.setImage(self.recordFrames.first, for: .normal)
+                self.recordButton.setBackgroundImage(self.recordFrames.first, for: .normal)
             }
         }
     }
@@ -1268,7 +1228,7 @@ final class GameViewController: UIViewController {
     private func stopRecordAnimation() {
         recordAnimationTimer?.invalidate()
         recordAnimationTimer = nil
-        recordButton.setImage(recordFrames.first, for: .normal)
+        recordButton.setBackgroundImage(recordFrames.first, for: .normal)
     }
 
     // MARK: - Мелочи
