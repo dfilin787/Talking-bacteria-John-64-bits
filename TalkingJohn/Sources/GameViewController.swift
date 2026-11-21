@@ -80,7 +80,7 @@ final class GameViewController: UIViewController {
     private var dragVelocity: CGPoint = .zero
 
     private let laughPool = ReactionPool(Reactions.laughPool)
-    private let ticklePool = ReactionPool(Reactions.ticklePool)
+    private let injectionPool = ReactionPool(Reactions.injectionPool)
     private let eatPool = ReactionPool(Reactions.eatPool)
     private var soundPickers: [String: PermutationPicker] = [:]
 
@@ -305,8 +305,8 @@ final class GameViewController: UIViewController {
             pillView.bounds = CGRect(x: 0, y: 0, width: size, height: size)
         }
 
-        // Кнопки крупнее оригинала и привязаны к краям экрана, а не к канве 320×480.
-        let side = max(72 * scale, 64)
+        // Кнопки заметно крупнее оригинала и привязаны к краям экрана.
+        let side = max(96 * scale, 84)
         let margin: CGFloat = 10
         let topSafe = max(view.safeAreaInsets.top, 12)
         let bottomSafe = view.safeAreaInsets.bottom
@@ -391,25 +391,16 @@ final class GameViewController: UIViewController {
             flickPillTowardBacteria()
             return
         }
-        // Тап по самой бактерии: голова — смех, тело — щекотка.
+        // Тап по бактерии = толчок → смех (laugh/laughGiggle/laughGuffaw).
         // Берём верхнюю (последнюю добавленную) под пальцем, если их несколько.
         guard let target = bacteriaViews.last(where: { $0.frame.contains(point) }),
               !isBacteriaBusy(target) else { return }
-        let relativeY = (point.y - target.frame.minY) / target.frame.height
-        if relativeY < 0.42 {
-            touchHead(on: target)
-        } else {
-            touchStomach(on: target)
-        }
+        pokeBacteria(target)
     }
 
-    private func touchHead(on target: BacteriaView) {
+    /// Толчок бактерии (тап или флинг пальцем) → случайный смех из пула.
+    private func pokeBacteria(_ target: BacteriaView) {
         guard let reaction = laughPool.next() else { return }
-        perform(reaction, on: target)
-    }
-
-    private func touchStomach(on target: BacteriaView) {
-        guard let reaction = ticklePool.next() else { return }
         perform(reaction, on: target)
     }
 
@@ -463,7 +454,8 @@ final class GameViewController: UIViewController {
         if !pillOnScreen { spawnPill() }
     }
 
-    /// Шприц: укол (`startPlayingNeedleAnimation`), бактерия ржёт.
+    /// Шприц: укол (`needle` — сам шприц на экране), затем реакция бактерии —
+    /// одна из двух вариаций `crazy1`/`crazy2` (по наблюдениям за оригиналом).
     @objc private func giveInjection() {
         guard recorder.state == .idle else { return }
         guard let target = bacteriaViews.filter({ !isBacteriaBusy($0) }).randomElement() else { return }
@@ -480,8 +472,8 @@ final class GameViewController: UIViewController {
             self.needleView.isHidden = true
             self.needleView.stopAndReset()
             self.busyBacteria.remove(ObjectIdentifier(target))
-            // После укола бактерия хохочет — как на видео.
-            guard let reaction = self.laughPool.next() else { self.resumeIdle(for: target); return }
+            // вариация укола: crazy1 или crazy2
+            guard let reaction = self.injectionPool.next() else { self.resumeIdle(for: target); return }
             self.perform(reaction, on: target)
         })
     }
@@ -639,10 +631,10 @@ final class GameViewController: UIViewController {
         pillBubbleView.contentSize = CGSize(width: bubbleSide, height: bubbleSide)
         pillBubbleView.center = pillView.center
         pillBubbleView.isHidden = false
-        // Кольцо пузырей без целой бактерии: кадры 4…14 клипа explode
-        // (0-1 — это ещё сама бактерия, их показывать нельзя).
+        // Кольцо пузырей без целой бактерии: в клипе explode бактерия держится
+        // до 5-го кадра включительно, чистое кольцо — только 6…14.
         if let explode = ClipLibrary.shared.clip(ClipName.explode), explode.frameCount > 15 {
-            let ring = Array(explode.frames[4...14])
+            let ring = Array(explode.frames[6...14])
             let bubbles = AnimationClip(name: "pillBubbles", frames: ring, size: explode.size)
             pillBubbleView.play(bubbles, repeats: 0, fps: 12)
         }
@@ -709,6 +701,10 @@ final class GameViewController: UIViewController {
                 // бактерия летит по инерции, потом снова начинает медленно ездить
                 setBacteriaVelocity(fling, for: grabbed)
                 draggedBacteria = nil
+                // если реально толкнули (быстрый флинг) — бактерия смеётся
+                if hypot(fling.x, fling.y) > 60 * scale, !isBacteriaBusy(grabbed) {
+                    pokeBacteria(grabbed)
+                }
             } else if pillOnScreen {
                 pillVelocity = fling
                 startPillPhysics()
@@ -928,7 +924,8 @@ final class GameViewController: UIViewController {
 
     private func scheduleIdleAction() {
         idleTimer?.invalidate()
-        let delay = Double.random(in: 2.2...4.5)
+        // редкие мелкие действия на фоне постоянного покачивания — не «кивает всегда»
+        let delay = Double.random(in: 6...12)
         idleTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             self?.playRandomIdle()
             self?.scheduleIdleAction()
@@ -937,7 +934,9 @@ final class GameViewController: UIViewController {
 
     private func playRandomIdle() {
         guard recorder.state == .idle else { return }
-        let names = [ClipName.lookLeftRight, ClipName.bumpLeftRight, ClipName.bumpUpDown]
+        // иногда осматривается или кивает; основу покоя составляет sway
+        let names = [ClipName.lookLeftRight, ClipName.lookLeftRight,
+                     ClipName.bumpLeftRight, ClipName.bumpUpDown]
         guard let clip = ClipLibrary.shared.random(from: names),
               let target = bacteriaViews.filter({ !isBacteriaBusy($0) }).randomElement() else { return }
         busyBacteria.insert(ObjectIdentifier(target))

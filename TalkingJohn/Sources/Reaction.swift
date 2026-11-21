@@ -68,9 +68,12 @@ final class ReactionPool {
     }
 }
 
-/// Готовые реакции. Соответствие клипов и звуков восстановлено по бинарнику:
-/// `laugh`/`laugh2`/`laugh3` для смеха, `crazy_1*` и `krohotanje` для щекотки,
-/// `eat1`/`eat2` для пончиков, `multiply` для таблетки, `explode*` для шприца.
+/// Готовые реакции. Карта клипов — по наблюдениям за оригиналом:
+/// - толчок бактерии (тап/флинг) → смех `laugh`/`laughGiggle`/`laughGuffaw`;
+/// - шприц → `needle` (сам укол) + вариация реакции `crazy1`/`crazy2`;
+/// - пончик → случайный `eat*Donut`, в конце `multiply` → новая бактерия;
+/// - таблетка в бактерию → `explode` (смерть);
+/// - покой → `sway`/`bumpUpDown`/`bumpLeftRight`/`lookLeftRight`.
 enum Reactions {
     static let headLaugh = Reaction(clipName: "laugh",
                                     sounds: [.laugh, .laugh2, .laugh3],
@@ -81,19 +84,22 @@ enum Reactions {
     static let guffaw = Reaction(clipName: "laughGuffaw",
                                  sounds: [.laugh3, .laugh2],
                                  fps: 16)
-    static let tickleCrazy1 = Reaction(clipName: "crazy1",
-                                       sounds: [.crazy1, .crazy1Alt, .crazy1Alt2],
-                                       fps: 16)
-    static let tickleCrazy2 = Reaction(clipName: "crazy2",
-                                       sounds: [.crazy1Alt, .crazy1Alt2, .crazy1],
-                                       fps: 16)
+    /// Вариации реакции на укол шприцем.
+    static let injectionCrazy1 = Reaction(clipName: "crazy1",
+                                          sounds: [.crazy1, .crazy1Alt, .crazy1Alt2],
+                                          fps: 16)
+    static let injectionCrazy2 = Reaction(clipName: "crazy2",
+                                          sounds: [.crazy1Alt, .crazy1Alt2, .crazy1],
+                                          fps: 16)
     static let eatPink = Reaction(clipName: "eatPinkDonut", sounds: [.eat1, .eat2], fps: 15)
     static let eatOrange = Reaction(clipName: "eatOrangeDonut", sounds: [.eat2, .eat1], fps: 15)
     static let eatBrown = Reaction(clipName: "eatBrownDonut", sounds: [.eat1, .eat2], fps: 15)
     static let multiply = Reaction(clipName: "multiply", sounds: [.multiply], fps: 12, minRepeats: 2)
     static let explode = Reaction(clipName: "explode", sounds: [.explode, .explode2], fps: 16)
 
+    /// Смех — реакция на толчок.
     static let laughPool = [headLaugh, giggle, guffaw]
-    static let ticklePool = [tickleCrazy1, tickleCrazy2]
+    /// Вариации укола шприцем.
+    static let injectionPool = [injectionCrazy1, injectionCrazy2]
     static let eatPool = [eatPink, eatOrange, eatBrown]
 }
