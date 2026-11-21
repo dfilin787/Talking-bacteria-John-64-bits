@@ -54,9 +54,10 @@ final class GameViewController: UIViewController {
     private var recordAnimationTimer: Timer?
     private var recordFrameIndex = 0
     private var isBusy = false
-    /// Какие бактерии сейчас заняты реакцией (смех/еда/укол/взрыв).
-    /// Независимость: тап по одной не блокирует остальных — они продолжают
-    /// ездить и реагировать. Глобальный isBusy остаётся только для записи голоса.
+    /// Какие бактерии сейчас заняты «эксклюзивной» реакцией (еда/размножение/
+    /// смерть/говорит). Только они не принимают новые взаимодействия.
+    /// Смех и idle-кивки НЕ блокируют: во время них бактерию можно трогать,
+    /// колоть и толкать — как в оригинале (иначе шприц «через раз»).
     private var busyBacteria = Set<ObjectIdentifier>()
     private func isBacteriaBusy(_ view: BacteriaView) -> Bool {
         busyBacteria.contains(ObjectIdentifier(view))
@@ -86,6 +87,7 @@ final class GameViewController: UIViewController {
     /// Какая бактерия сейчас в руке (индекс в bacteriaViews) и куда её тащат.
     private var draggedBacteria: BacteriaView?
     private var dragOffset: CGPoint = .zero
+    private var dragStartPoint: CGPoint = .zero
     private var dragLastPoint: CGPoint = .zero
     private var dragLastTime: TimeInterval = 0
     private var dragVelocity: CGPoint = .zero
@@ -97,11 +99,13 @@ final class GameViewController: UIViewController {
 
     /// `maxAvailableBacterias` в оригинале возвращает 6.
     private let maxBacteria = 6
+    /// Единая высота бактерии (в дизайн-точках): и стартовые, и новые из пончиков
+    /// одного размера — как просил пользователь.
+    private let bacteriaDesignHeight: CGFloat = 170
+    private var bacteriaHeight: CGFloat { bacteriaDesignHeight * scale }
     /// Нижняя граница поля — верх фиолетовой мембраны (≈0.90 высоты фона).
     /// Бактерии не заходят в жёлтый слой под ней.
     private let membraneFraction: CGFloat = 0.90
-    /// Правая граница поля — левее столбика кнопок.
-    private let buttonsReserve: CGFloat = 110
 
     // MARK: - Жизненный цикл
 
@@ -221,9 +225,9 @@ final class GameViewController: UIViewController {
         pan.delegate = self
         stageView.addGestureRecognizer(pan)
 
-        // Тап (смех/щекотка) срабатывает, только если это не толчок:
-        // иначе любое перетаскивание бактерии засчитывалось бы как щекотка.
-        tap.require(toFail: pan)
+        // require(toFail: pan) убран: пан стартует на тач-дауне и глушил тап
+        // целиком («нажатие не убивает»). Тап сам фейлится, если палец уехал
+        // больше slop — этого достаточно, чтобы тап и толчок не конфликтовали.
     }
 
     /// Создаёт бактерию, добавляет её на сцену и в массив скоростей.
@@ -250,11 +254,11 @@ final class GameViewController: UIViewController {
         donutButton.alpha = full ? 0.4 : 1.0
     }
 
-    /// Ставит бактерию в свободное место поля, не налезая на других и кнопки.
-    /// Все бактерии одного крупного размера (как новые из пончиков).
+    /// Ставит бактерию в свободное место поля, не налезая на других.
+    /// Все бактерии одного размера (bacteriaDesignHeight) — и старые, и новые.
     private func placeBacteria(_ bacteria: BacteriaView) {
         let field = bacteriaField()
-        let h: CGFloat = 190 * scale
+        let h = bacteriaHeight
         let w = h * (characterCanvas.width / characterCanvas.height)
         bacteria.bounds = CGRect(x: 0, y: 0, width: w, height: h)
         bacteria.contentSize = CGSize(width: w, height: h)
@@ -281,14 +285,14 @@ final class GameViewController: UIViewController {
         bacteria.center = best
     }
 
-    /// Поле движения бактерий: выше мембраны, левее кнопок, с отступами.
+    /// Поле движения бактерий: выше мембраны, на ВСЮ ширину экрана —
+    /// бактерии бегают и под кнопками (кнопки лежат поверх них), как в оригинале.
     private func bacteriaField() -> CGRect {
         let w = stageView.bounds.width
         let h = stageView.bounds.height
         let top = max(view.safeAreaInsets.top, 12) + 8
         let bottom = h * membraneFraction
-        let right = w - buttonsReserve * scale
-        return CGRect(x: 8, y: top, width: max(right - 8, 100), height: max(bottom - top, 100))
+        return CGRect(x: 8, y: top, width: max(w - 16, 100), height: max(bottom - top, 100))
     }
 
     /// Скорость блуждания в экранных точках/с — бактерии заметно, но плавно ездят.
@@ -339,24 +343,24 @@ final class GameViewController: UIViewController {
         backgroundView.frame = bounds
         let stageSize = bounds.size
 
-        // Свежие бактерии ставим в свободное место поля; уже живущие — только
-        // масштабируем пропорционально, сохраняя позиции и скорости.
+        // ВСЕ бактерии одного размера (старые и новые из пончиков).
+        // Позиции сохраняем пропорционально, размер задаём единый.
         let ratio = previousScale > 0 ? scale / previousScale : 1
+        let h = bacteriaHeight
+        let w = h * (characterCanvas.width / characterCanvas.height)
         for (index, bacteria) in bacteriaViews.enumerated() {
             if bacteria.frame == .zero {
                 placeBacteria(bacteria)
-            } else if ratio != 1 {
+            } else {
                 let center = CGPoint(x: bacteria.center.x * ratio, y: bacteria.center.y * ratio)
-                bacteria.bounds = CGRect(x: 0, y: 0,
-                                         width: bacteria.bounds.width * ratio,
-                                         height: bacteria.bounds.height * ratio)
-                bacteria.center = center
+                bacteria.bounds = CGRect(x: 0, y: 0, width: w, height: h)
+                bacteria.center = clampToField(center, halfW: w * 0.42, halfH: h * 0.42)
                 if index < bacteriaVelocities.count {
                     bacteriaVelocities[index].x *= ratio
                     bacteriaVelocities[index].y *= ratio
                 }
             }
-            bacteria.contentSize = bacteria.bounds.size
+            bacteria.contentSize = CGSize(width: w, height: h)
         }
         previousScale = scale
         needleView.frame = CGRect(origin: .zero, size: stageSize)
@@ -367,9 +371,8 @@ final class GameViewController: UIViewController {
             pillView.bounds = CGRect(x: 0, y: 0, width: size, height: size)
         }
 
-        // Кнопки крупные: картинка растягивается на всю кнопку (scaleToFill),
-        // иначе 60pt-иконка сидит мелко внутри большого фрейма.
-        let side = max(110 * scale, 96)
+        // Кнопки средние (не мелкие и не огромные): backgroundImage на весь фрейм.
+        let side = max(72 * scale, 64)
         let margin: CGFloat = 8
         let topSafe = max(view.safeAreaInsets.top, 12)
         recordButton.frame = CGRect(x: margin, y: topSafe, width: side, height: side)
@@ -452,16 +455,17 @@ final class GameViewController: UIViewController {
     }
 
     /// Заразный смех: источник + все свободные соседи (spreadLaughAnimationWithSource:).
+    /// Смех неэксклюзивный — во время него бактерию можно трогать и колоть.
     private func spreadLaugh(from source: BacteriaView) {
         guard let reaction = laughPool.next() else { return }
-        perform(reaction, on: source)
+        perform(reaction, on: source, exclusive: false)
         for other in bacteriaViews where other !== source && !isBacteriaBusy(other) {
             // небольшая задержка, чтобы смех расходился волной, а не хором в один кадр
             let delay = Double.random(in: 0.05...0.25)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak other] in
                 guard let self, let other, self.bacteriaViews.contains(where: { $0 === other }),
                       !self.isBacteriaBusy(other), let r = self.laughPool.next() else { return }
-                self.perform(r, on: other)
+                self.perform(r, on: other, exclusive: false)
             }
         }
     }
@@ -547,14 +551,15 @@ final class GameViewController: UIViewController {
                 self.needleView.stopAndReset()
             })
         }
-        // все свободные бактерии реагируют хором в момент укола
+        // все свободные бактерии реагируют хором в момент укола;
+        // реакция неэксклюзивная — во время неё бактерию можно трогать дальше
         let free = bacteriaViews.filter { !isBacteriaBusy($0) }
         DispatchQueue.main.asyncAfter(deadline: .now() + stabDelay) { [weak self] in
             guard let self, self.recorder.state == .idle else { return }
             for bacteria in free where self.bacteriaViews.contains(where: { $0 === bacteria })
                 && !self.isBacteriaBusy(bacteria) {
                 if let reaction = self.injectionPool.next() {
-                    self.perform(reaction, on: bacteria)
+                    self.perform(reaction, on: bacteria, exclusive: false)
                 }
             }
         }
@@ -608,13 +613,17 @@ final class GameViewController: UIViewController {
 
     /// Реакция на конкретной бактерии. Не блокирует остальных: каждая живёт
     /// своей жизнью — тап по одной не замораживает колонию.
+    /// - Parameter exclusive: true — бактерия «занята» (еда/смерть/размножение)
+    ///   и не принимает новые взаимодействия; false — смех/укол, во время которых
+    ///   бактерию можно трогать, толкать и колоть (иначе шприц «через раз»).
     private func perform(_ reaction: Reaction,
                          on target: BacteriaView? = nil,
+                         exclusive: Bool = true,
                          completion: (() -> Void)? = nil) {
         guard let clip = ClipLibrary.shared.clip(reaction.clipName) else { return }
         let view = target ?? bacteriaViews.randomElement()
         guard let view, !isBacteriaBusy(view) else { return }
-        busyBacteria.insert(ObjectIdentifier(view))
+        if exclusive { busyBacteria.insert(ObjectIdentifier(view)) }
 
         let picker = soundPicker(for: reaction)
         let effect = reaction.sounds[picker.next()]
@@ -721,8 +730,9 @@ final class GameViewController: UIViewController {
         pillView.transform = .identity
     }
 
-    /// Свайп: таблетку тащим пальцем, бактерию — только толкаем (не фулл-таскание,
-    /// как в оригинале). Бактерию нельзя занести на мембрану или за края поля.
+    /// Свайп: таблетку тащим пальцем, бактерию — толкаем (не фулл-таскание).
+    /// Толчок считается по ОБЩЕМУ смещению от старта, а не по последнему тику:
+    /// иначе палец замер в конце — скорость ноль — толчка нет («толкать нельзя»).
     @objc private func handleDragPan(_ gesture: UIPanGestureRecognizer) {
         let location = gesture.location(in: stageView)
         switch gesture.state {
@@ -731,6 +741,7 @@ final class GameViewController: UIViewController {
                 draggedBacteria = nil
                 stopPillPhysics()
                 pillLastInteraction = Date()
+                dragStartPoint = location
                 dragLastPoint = location
                 dragLastTime = CACurrentMediaTime()
                 dragVelocity = .zero
@@ -739,6 +750,7 @@ final class GameViewController: UIViewController {
             }), !isBacteriaBusy(grabbed) {
                 // бактерию не тащим — запоминаем старт для толчка
                 draggedBacteria = grabbed
+                dragStartPoint = location
                 dragLastPoint = location
                 dragLastTime = CACurrentMediaTime()
                 dragVelocity = .zero
@@ -754,21 +766,25 @@ final class GameViewController: UIViewController {
             dragLastPoint = location
             dragLastTime = now
             if draggedBacteria != nil {
-                // бактерию не перемещаем за пальцем — только копим скорость толчка
+                // бактерию не перемещаем за пальцем — толчок будет на отпускании
             } else if pillOnScreen {
                 pillView.center = clampToField(location, half: pillView.bounds.width / 2)
                 pillLastInteraction = Date()
             }
         case .ended, .cancelled:
-            let fling = CGPoint(x: dragVelocity.x * 0.5, y: dragVelocity.y * 0.5)
             if let grabbed = draggedBacteria {
                 draggedBacteria = nil
-                // толчок бактерии в направлении свайпа (не фулл-перемещение)
-                if hypot(fling.x, fling.y) > 30 * scale {
-                    pokeBacteria(grabbed, kickVelocity: fling)
+                // толчок по общему смещению от старта свайпа
+                let dx = location.x - dragStartPoint.x
+                let dy = location.y - dragStartPoint.y
+                let dist = hypot(dx, dy)
+                if dist > 12 * scale {
+                    let speed = min(dist * 6, 420 * scale)
+                    let kick = CGPoint(x: dx / dist * speed, y: dy / dist * speed)
+                    pokeBacteria(grabbed, kickVelocity: kick)
                 }
             } else if pillOnScreen {
-                pillVelocity = fling
+                pillVelocity = CGPoint(x: dragVelocity.x * 0.5, y: dragVelocity.y * 0.5)
                 pillLastInteraction = Date()
                 startPillPhysics()
             }
@@ -1045,15 +1061,14 @@ final class GameViewController: UIViewController {
 
     private func playRandomIdle() {
         guard recorder.state == .idle else { return }
-        // кивки и осмотр — основа idle-поведения
+        // кивки и осмотр — основа idle-поведения; НЕ блокируют взаимодействие:
+        // во время кивка бактерию можно трогать, толкать и колоть
         let names = [ClipName.bumpUpDown, ClipName.bumpLeftRight,
                      ClipName.bumpUpDown, ClipName.lookLeftRight]
         guard let clip = ClipLibrary.shared.random(from: names),
               let target = bacteriaViews.filter({ !isBacteriaBusy($0) }).randomElement() else { return }
-        busyBacteria.insert(ObjectIdentifier(target))
         target.play(clip, repeats: 1, fps: 13, completion: { [weak self] in
             guard let self else { return }
-            self.busyBacteria.remove(ObjectIdentifier(target))
             self.resumeIdle(for: target)
         })
     }

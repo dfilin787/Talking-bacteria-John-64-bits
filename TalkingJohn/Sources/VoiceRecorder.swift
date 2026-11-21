@@ -79,13 +79,6 @@ final class VoiceRecorder {
     func beginListening() {
         guard !isCapturing else { return }
 
-        let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
-            transition(to: .failed("Микрофон недоступен"))
-            return
-        }
-
         // Состояние меняется только на главном потоке; аудиопоток лишь читает isCapturing.
         isCapturing = true
         silenceStopScheduled = false
@@ -94,10 +87,8 @@ final class VoiceRecorder {
         lastVoiceAt = Date()
         level = 0
 
-        // Узел воспроизведения подключён один раз в init — здесь только тап и запуск.
         graphQueue.async { [weak self] in
             guard let self else { return }
-            let collector = SampleCollector(sampleRate: format.sampleRate)
             do {
                 self.engine.prepare()
                 if !self.engine.isRunning { try self.engine.start() }
@@ -108,9 +99,20 @@ final class VoiceRecorder {
                 }
                 return
             }
-
-            self.engine.inputNode.removeTap(onBus: 0)
-            self.engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+            // Формат входа читаем ПОСЛЕ запуска движка — до start он может быть
+            // нулевым, и tap с неверным форматом ничего не слышит.
+            let input = self.engine.inputNode
+            let format = input.outputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                DispatchQueue.main.async {
+                    self.isCapturing = false
+                    self.transition(to: .failed("Микрофон недоступен"))
+                }
+                return
+            }
+            let collector = SampleCollector(sampleRate: format.sampleRate)
+            input.removeTap(onBus: 0)
+            input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
                 self?.consume(buffer, into: collector)
             }
             DispatchQueue.main.async {
@@ -172,11 +174,9 @@ final class VoiceRecorder {
     private func tearDownCapture() {
         guard isCapturing else { return }
         isCapturing = false
+        // Снимаем только tap. Движок НЕ останавливаем: stop() глушит input-узел
+        // и сбрасывает его формат, из-за чего следующая прослушка «не слышит».
         engine.inputNode.removeTap(onBus: 0)
-        graphQueue.async { [weak self] in
-            guard let self, self.engine.isRunning else { return }
-            self.engine.stop()
-        }
     }
 
     /// Вызывается на аудиопотоке. Только копирование сэмплов и арифметика.
