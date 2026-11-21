@@ -432,13 +432,14 @@ final class GameViewController: UIViewController {
         }
         // Тап по бактерии = смерть (лопается пузырями), как ты просил.
         // Смех от толчка остаётся только на свайпе-флинге, не на тапе.
-        guard let target = bacteriaViews.last(where: { $0.frame.contains(point) }),
+        guard let target = bacteriaViews.last(where: { $0.frame.insetBy(dx: -6, dy: -6).contains(point) }),
               !isBacteriaBusy(target) else { return }
         popBacteria(target)
     }
 
-    /// Толчок бактерии свайпом: физический пинок + заразный смех сразу.
-    /// Никакого отложенного «когда остановится» — смех только от реального толчка.
+    /// Толчок бактерии свайпом: физический пинок + копим счётчик толчков.
+    /// Смех приходит НЕ сразу, а когда бактерия остановится после ≥2 толчков
+    /// (как lastLaughTickle/isLaughing в оригинале). Смеётся только толкнутая.
     private func pokeBacteria(_ target: BacteriaView, kickVelocity: CGPoint? = nil) {
         if let index = bacteriaViews.firstIndex(where: { $0 === target }) {
             if let kickVelocity {
@@ -449,9 +450,43 @@ final class GameViewController: UIViewController {
                 bacteriaVelocities[index] = CGPoint(x: cos(angle) * kick, y: sin(angle) * kick)
             }
         }
-        // смеётся только толкнутая бактерия, без хора
-        if let reaction = laughPool.next() {
-            perform(reaction, on: target, exclusive: false)
+        pokeCounts[ObjectIdentifier(target), default: 0] += 1
+        scheduleLaughCheck()
+    }
+
+    private var pokeCounts: [ObjectIdentifier: Int] = [:]
+    private var laughCheckTimer: Timer?
+
+    /// Раз в 0.4 с: толканная бактерия остановилась и накопилось ≥2 толчков → смех.
+    private func scheduleLaughCheck() {
+        guard laughCheckTimer == nil else { return }
+        laughCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+            self?.checkLaughAfterPokes()
+        }
+    }
+
+    private func checkLaughAfterPokes() {
+        guard recorder.state == .idle else { return }
+        var anyPending = false
+        for (index, bacteria) in bacteriaViews.enumerated() {
+            let id = ObjectIdentifier(bacteria)
+            guard let count = pokeCounts[id], count >= 2 else {
+                if pokeCounts[id] != nil { anyPending = true }
+                continue
+            }
+            if isBacteriaBusy(bacteria) { anyPending = true; continue }
+            let speed = index < bacteriaVelocities.count
+                ? hypot(bacteriaVelocities[index].x, bacteriaVelocities[index].y) : 0
+            if speed > 40 * scale { anyPending = true; continue }
+            // остановилась после нескольких толчков → смеётся (только она)
+            pokeCounts[id] = nil
+            if let reaction = laughPool.next() {
+                perform(reaction, on: bacteria, exclusive: false)
+            }
+        }
+        if !anyPending && pokeCounts.isEmpty {
+            laughCheckTimer?.invalidate()
+            laughCheckTimer = nil
         }
     }
 
@@ -574,6 +609,7 @@ final class GameViewController: UIViewController {
     }
 
     private func removeBacteria(_ target: BacteriaView) {
+        stopVoice(for: target)
         target.stopAndReset()
         target.removeFromSuperview()
         busyBacteria.remove(ObjectIdentifier(target))
@@ -624,8 +660,10 @@ final class GameViewController: UIViewController {
         }
     }
 
-    /// Клип играется ровно `minRepeats` проходов, звук стартует на `soundFrameStart`
-    /// и обрезается вместе с клипом. По окончании бактерия возвращается к покою.
+    /// Клип играется `minRepeats` проходов, но не заканчивается раньше звука
+    /// (waitForSoundSync оригинала): звук laugh3 = 5 с, а клип 2 с — без синка
+    /// анимка пропадала, а звук ещё играл. Голос запоминаем и обрезаем при
+    /// прерывании/смерти, чтобы звук не переживал бактерию.
     private func startReaction(_ clip: AnimationClip,
                                on target: BacteriaView,
                                reaction: Reaction,
@@ -634,11 +672,19 @@ final class GameViewController: UIViewController {
                                completion: (() -> Void)?) {
         let startFrame = min(reaction.soundFrameStart, clip.frameCount - 1)
         var soundStarted = false
+        var voice = -1
 
         target.play(
             clip,
             repeats: max(1, reaction.minRepeats),
             fps: reaction.fps,
+            syncGate: { [weak self] in
+                // клип держится, пока его звук ещё звучит
+                guard let self, voice >= 0 else { return true }
+                var alive = false
+                self.queue.sync { alive = self.effects?.isPlaying(voice: voice) ?? false }
+                return !alive
+            },
             frameSound: { [weak self] frame in
                 guard let self, !soundStarted, frame == startFrame else { return }
                 soundStarted = true
@@ -648,13 +694,15 @@ final class GameViewController: UIViewController {
                         if !self.audioEngine.isRunning {
                             do { try self.audioEngine.start() } catch { return }
                         }
-                        self.effects?.play(buffer)
+                        let (_, idx) = self.effects?.play(buffer) ?? (0, -1)
+                        DispatchQueue.main.async { voice = idx }
                     }
                 }
             },
             completion: { [weak self] in
                 guard let self else { return }
                 self.busyBacteria.remove(ObjectIdentifier(target))
+                self.stopVoice(for: target)
                 completion?()
                 // бактерия снова в покое, если не идёт запись и она ещё жива
                 if self.recorder.state == .idle, self.bacteriaViews.contains(where: { $0 === target }) {
@@ -662,6 +710,18 @@ final class GameViewController: UIViewController {
                 }
             }
         )
+        reactionVoices[ObjectIdentifier(target)] = { voice }
+    }
+
+    /// Голос, звучащий у бактерии (для обрезки при прерывании/смерти).
+    private var reactionVoices: [ObjectIdentifier: () -> Int] = [:]
+    private func stopVoice(for target: BacteriaView) {
+        let id = ObjectIdentifier(target)
+        guard let getter = reactionVoices[id] else { return }
+        let v = getter()
+        reactionVoices[id] = nil
+        guard v >= 0 else { return }
+        queue.async { [weak self] in self?.effects?.stop(voice: v) }
     }
 
     /// Возвращает одну бактерию к покачиванию, не трогая остальных.

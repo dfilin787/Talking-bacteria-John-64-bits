@@ -107,12 +107,14 @@ final class EffectPlayer {
 
     /// Проигрывает эффект и возвращает предсказанную длительность в секундах.
     /// Вызывать только на аудиочереди владельца движка.
+    /// - Returns: длительность и индекс голоса, чтобы можно было обрезать
+    ///   именно этот звук при прерывании анимации (не глуша соседей).
     @discardableResult
-    func play(_ buffer: AVAudioPCMBuffer, volume: Float = 1.0) -> TimeInterval {
+    func play(_ buffer: AVAudioPCMBuffer, volume: Float = 1.0) -> (TimeInterval, Int) {
         let duration = Double(buffer.frameLength) / buffer.format.sampleRate
-        guard !players.isEmpty else { return 0 }
+        guard !players.isEmpty else { return (0, -1) }
         if !engine.isRunning {
-            do { try engine.start() } catch { return 0 }
+            do { try engine.start() } catch { return (0, -1) }
         }
         let index = nextPlayer
         let node = players[index]
@@ -126,7 +128,25 @@ final class EffectPlayer {
         deadlinesLock.lock()
         deadlines[index] = CACurrentMediaTime() + duration
         deadlinesLock.unlock()
-        return duration
+        return (duration, index)
+    }
+
+    /// Обрезает один голос (звук прерванной анимации), не трогая остальные.
+    func stop(voice: Int) {
+        guard players.indices.contains(voice) else { return }
+        players[voice].stop()
+        deadlinesLock.lock()
+        deadlines[voice] = 0
+        deadlinesLock.unlock()
+    }
+
+    /// Ещё звучит ли голос (для waitForSoundSync клипа).
+    func isPlaying(voice: Int) -> Bool {
+        guard deadlines.indices.contains(voice) else { return false }
+        deadlinesLock.lock()
+        let alive = deadlines[voice] > CACurrentMediaTime()
+        deadlinesLock.unlock()
+        return alive
     }
 
     func stopAll() {
