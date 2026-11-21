@@ -17,4 +17,7 @@ __pycache__/
 *.pyc
 ci.log
 out/
-ci.log
+
+# Локальные материалы для анализа: кадры видео, превью, извлечённый бинарник
+ref/
+tools/TalkingJohn_armv7
