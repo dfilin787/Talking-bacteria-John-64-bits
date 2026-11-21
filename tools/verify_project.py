@@ -105,7 +105,7 @@ def check_ui_images(texts):
         for i in range(low, high + 1):
             referenced.add("%s%d" % (prefix, i))
     referenced = {n for n in referenced if "\\" not in n}
-    assert "RecButton3" in referenced, "интерполяция RecButton не развернулась"
+    # Кнопка записи экрана удалена из игры — RecButton больше не требуется.
     # Кнопки предметов: configureItem(button, image: "asset", action: #selector(...)).
     table = re.findall(r'configureItem\([^,]+, image: "([^"]+)", action: #selector\((\w+)\)', joined)
     for asset, selector in table:
@@ -118,7 +118,7 @@ def check_ui_images(texts):
     missing = sorted(n for n in referenced if n not in on_disk and n not in on_disk_base)
     if missing:
         fail("картинки интерфейса не найдены: %s" % ", ".join(missing))
-    notes.append("UI-картинок в коде: %d (RecButton0-3 развёрнуты из интерполяции)" % len(referenced))
+    notes.append("UI-картинок в коде: %d" % len(referenced))
 
 
 def check_balance(texts):
