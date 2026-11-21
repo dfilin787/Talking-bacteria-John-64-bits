@@ -265,8 +265,51 @@ final class SceneRecorder: NSObject {
             let pts = CMTime(seconds: host, preferredTimescale: 600)
             let rel = CMTimeSubtract(pts, start)
             guard CMTimeCompare(rel, .zero) >= 0 else { return }
-            audioInput.append(copy, withPresentationTime: rel)
+            guard let sampleBuffer = Self.makeSampleBuffer(from: copy, presentationTime: rel) else { return }
+            audioInput.append(sampleBuffer)
         }
+    }
+
+    /// AVAssetWriterInput(audio) принимает CMSampleBuffer, не AVAudioPCMBuffer.
+    /// Оборачиваем PCM-буфер с таймингом через CMAudioFormatDescription.
+    private static func makeSampleBuffer(from buffer: AVAudioPCMBuffer,
+                                         presentationTime: CMTime) -> CMSampleBuffer? {
+        let frames = CMItemCount(buffer.frameLength)
+        guard frames > 0 else { return nil }
+        var formatDesc: CMAudioFormatDescription?
+        let asbd = buffer.format.streamDescription
+        guard CMAudioFormatDescriptionCreate(
+            allocator: kCFAllocatorDefault, asbd: asbd,
+            layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil,
+            extensions: nil, formatDescriptionOut: &formatDesc) == noErr,
+              let format = formatDesc else { return nil }
+
+        var timing = CMSampleTimingInfo(
+            duration: CMTime(value: 1, timescale: CMTimeScale(buffer.format.sampleRate)),
+            presentationTimeStamp: presentationTime,
+            decodeTimeStamp: .invalid)
+
+        // копируем аудио-данные в CMBlockBuffer, чтобы владеть памятью
+        let byteCount = Int(buffer.frameLength) * MemoryLayout<Float>.size * Int(buffer.format.channelCount)
+        var blockBuffer: CMBlockBuffer?
+        guard CMBlockBufferCreateWithMemoryBlock(
+            allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: byteCount,
+            blockAllocator: kCFAllocatorDefault, customBlockSource: nil,
+            offsetToData: 0, dataLength: byteCount, flags: 0,
+            blockBufferOut: &blockBuffer) == kCMBlockBufferNoErr,
+              let block = blockBuffer,
+              let src = buffer.floatChannelData?[0] else { return nil }
+        CMBlockBufferReplaceDataBytes(with: src, blockBuffer: block,
+                                      offsetIntoDestination: 0, dataLength: byteCount)
+
+        var sampleBuffer: CMSampleBuffer?
+        let status = CMSampleBufferCreate(
+            allocator: kCFAllocatorDefault, dataBuffer: block, dataReady: true,
+            makeDataReadyCallback: nil, refcon: nil, formatDescription: format,
+            sampleCount: frames, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
+            sampleSizeEntryCount: 0, sampleSizeArray: nil, sampleBufferOut: &sampleBuffer)
+        guard status == noErr else { return nil }
+        return sampleBuffer
     }
 
     // MARK: - Сохранение
