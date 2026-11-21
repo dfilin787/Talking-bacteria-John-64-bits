@@ -41,7 +41,6 @@ final class GameViewController: UIViewController {
     private var effects: EffectPlayer?
     private var recorder: VoiceRecorder!
     private var sceneRecorder: SceneRecorder!
-    private var recordingBadge: UIView?
     /// Бактерия, которая слушает/повторяет голос (долгое нажатие на камеру).
     private var talker: BacteriaView?
     /// Счётчик толчков по бактерии: смех не моментальный, а после 2-3 толчков,
@@ -68,6 +67,17 @@ final class GameViewController: UIViewController {
     private var pillVelocity: CGPoint = .zero
     private var pillDisplayLink: CADisplayLink?
     private var pillLastTimestamp: TimeInterval = 0
+    /// Таблетка живёт, пока с ней что-то делают; исчезает только после долгого
+    /// бездействия (как в оригинале — не одноразовая).
+    private var pillLastInteraction = Date()
+    private let pillIdleTimeout: TimeInterval = 12
+    /// Бактерия, которую сейчас убивает таблетка — защита от повторных попаданий.
+    private var pillVictim: BacteriaView?
+    /// Сколько бактерий сейчас едят/делятся — не больше 2 одновременно (лимит 6).
+    private var eatingCount = 0
+    private let maxEating = 2
+    /// Кулдаун шприца — нельзя колоть бесконечно.
+    private var injectionBusy = false
 
     /// Бактерии сами немного ездят по экрану и их можно толкать пальцем,
     /// как таблетку. Скорость в дизайн-точках в секунду.
@@ -243,10 +253,10 @@ final class GameViewController: UIViewController {
     }
 
     /// Ставит бактерию в свободное место поля, не налезая на других и кнопки.
+    /// Все бактерии одного крупного размера (как новые из пончиков).
     private func placeBacteria(_ bacteria: BacteriaView) {
         let field = bacteriaField()
-        // размер proportional кадру, случайный в разумных пределах
-        let h = CGFloat.random(in: 150...190) * scale
+        let h: CGFloat = 190 * scale
         let w = h * (characterCanvas.width / characterCanvas.height)
         bacteria.bounds = CGRect(x: 0, y: 0, width: w, height: h)
         bacteria.contentSize = CGSize(width: w, height: h)
@@ -293,9 +303,9 @@ final class GameViewController: UIViewController {
     private func buildControls() {
         recordFrames = (0...3).compactMap { uiImage("RecButton\($0)") }
         recordButton.setImage(recordFrames.first, for: .normal)
-        recordButton.imageView?.contentMode = .scaleAspectFit
+        recordButton.imageView?.contentMode = .scaleToFill
         recordButton.addTarget(self, action: #selector(toggleRecording), for: .touchUpInside)
-        recordButton.accessibilityLabel = "Снять видео"
+        recordButton.accessibilityLabel = "Записать голос"
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleRecordLongPress(_:)))
         longPress.minimumPressDuration = 0.5
         recordButton.addGestureRecognizer(longPress)
@@ -304,14 +314,13 @@ final class GameViewController: UIViewController {
         configureItem(donutButton, image: "gumb-donut-60", action: #selector(feedDonut), label: "Пончик")
         configureItem(injectionButton, image: "injection-60", action: #selector(giveInjection), label: "Шприц")
         configureItem(pillButton, image: "gumb-pill-60", action: #selector(givePill), label: "Таблетка")
-        // В ролике крест виден с самого начала: nib прячет его только до первого кадра.
         pillButton.isHidden = false
         pillButton.alpha = 1
     }
 
     private func configureItem(_ button: UIButton, image: String, action: Selector, label: String) {
         button.setImage(uiImage(image), for: .normal)
-        button.imageView?.contentMode = .scaleAspectFit
+        button.imageView?.contentMode = .scaleToFill
         button.addTarget(self, action: action, for: .touchUpInside)
         button.accessibilityLabel = label
         button.addTarget(self, action: #selector(itemTouchDown(_:)), for: .touchDown)
@@ -360,22 +369,21 @@ final class GameViewController: UIViewController {
             pillView.bounds = CGRect(x: 0, y: 0, width: size, height: size)
         }
 
-        // Кнопки заметно крупнее оригинала и привязаны к краям экрана.
-        let side = max(96 * scale, 84)
-        let margin: CGFloat = 10
+        // Кнопки крупные: картинка растягивается на всю кнопку (scaleToFill),
+        // иначе 60pt-иконка сидит мелко внутри большого фрейма.
+        let side = max(110 * scale, 96)
+        let margin: CGFloat = 8
         let topSafe = max(view.safeAreaInsets.top, 12)
-        let bottomSafe = view.safeAreaInsets.bottom
         recordButton.frame = CGRect(x: margin, y: topSafe, width: side, height: side)
 
         // правый столбик по центру вертикали, с равным шагом
-        let gap = side + 18
+        let gap = side + 16
         let columnHeight = gap * 2 + side
         let columnTop = max(topSafe + side + 24, (bounds.height - columnHeight) / 2)
         let rightX = bounds.width - side - margin
         injectionButton.frame = CGRect(x: rightX, y: columnTop, width: side, height: side)
         pillButton.frame = CGRect(x: rightX, y: columnTop + gap, width: side, height: side)
         donutButton.frame = CGRect(x: rightX, y: columnTop + gap * 2, width: side, height: side)
-        _ = bottomSafe
     }
 
     // MARK: - Звук
@@ -434,13 +442,13 @@ final class GameViewController: UIViewController {
     private func pokeBacteria(_ target: BacteriaView, kickVelocity: CGPoint? = nil) {
         let id = ObjectIdentifier(target)
         pokeCounts[id, default: 0] += 1
-        // толкаем бактерию физически
+        // толкаем бактерию физически (небольшой пинок, не улёт)
         if let index = bacteriaViews.firstIndex(where: { $0 === target }) {
             if let kickVelocity {
                 bacteriaVelocities[index] = kickVelocity
             } else {
                 let angle = CGFloat.random(in: 0...(2 * .pi))
-                let kick = CGFloat.random(in: 120...220) * scale
+                let kick = CGFloat.random(in: 60...110) * scale
                 bacteriaVelocities[index] = CGPoint(x: cos(angle) * kick, y: sin(angle) * kick)
             }
         }
@@ -494,32 +502,42 @@ final class GameViewController: UIViewController {
         }
     }
 
-    /// Пончик: бактерия ест случайный пончик, затем делится. После 6 бактерий
-    /// кнопка сереет (лимит maxAvailableBacterias = 6).
+    /// Пончик: бактерия ест случайный пончик, затем делится. Одновременно едят
+    /// не больше двух бактерий (как в оригинале — чтобы не превысить лимит 6).
+    /// После 6 бактерий кнопка сереет.
     @objc private func feedDonut() {
-        guard recorder.state == .idle, bacteriaViews.count < maxBacteria,
+        guard recorder.state == .idle, eatingCount < maxEating,
+              bacteriaViews.count + pendingChildren < maxBacteria,
               let reaction = eatPool.next() else { return }
         // кормим случайную свободную бактерию, а не всегда первую
         guard let target = bacteriaViews.filter({ !isBacteriaBusy($0) }).randomElement() else { return }
+        eatingCount += 1
         perform(reaction, on: target) { [weak self] in
             guard let self else { return }
+            self.eatingCount -= 1
             self.multiplyBacteria(from: target)
         }
     }
 
     /// Размножение: клип `multiply`, рядом появляется новая бактерия.
-    /// Лимит — `maxAvailableBacterias` = 6.
+    /// Лимит — `maxAvailableBacterias` = 6, учитываем уже запланированных детей.
+    private var pendingChildren = 0
     private func multiplyBacteria(from parent: BacteriaView) {
-        guard bacteriaViews.count < maxBacteria,
+        guard bacteriaViews.count + pendingChildren < maxBacteria,
               let clip = ClipLibrary.shared.clip(ClipName.multiply) else { return }
+        pendingChildren += 1
         busyBacteria.insert(ObjectIdentifier(parent))
         playEffect(.multiply)
         parent.play(clip, repeats: 1, fps: 12, completion: { [weak self] in
             guard let self else { return }
             parent.stopAndReset()
             self.busyBacteria.remove(ObjectIdentifier(parent))
-            // addBacteria уже поставил ребёнка в свободное место и включил idle
+            self.pendingChildren -= 1
+            // финальная проверка на момент появления ребёнка
+            guard self.bacteriaViews.count < self.maxBacteria else { return }
+            // addBacteria уже ставит ребёнка в свободное место и включает idle
             let child = self.addBacteria()
+            // ребёнок того же размера, что и остальные (крупный, как новые)
             child.alpha = 0
             child.transform = CGAffineTransform(scaleX: 0.3, y: 0.3)
             UIView.animate(withDuration: 0.4, delay: 0, usingSpringWithDamping: 0.65,
@@ -534,36 +552,51 @@ final class GameViewController: UIViewController {
     }
 
     /// Аптечка: спавнит таблетку на экране (`touchBacteriaPill`).
-    /// Сама по себе она ничего не делает — нужно смахнуть её в бактерию.
+    /// Таблетка не одноразовая: живёт, пока с ней взаимодействуют, и исчезает
+    /// только после долгого бездействия. Повторный тап по кнопке не плодит новые.
     @objc private func givePill() {
         guard recorder.state == .idle else { return }
-        if !pillOnScreen { spawnPill() }
+        if pillOnScreen {
+            pillLastInteraction = Date()
+            return
+        }
+        spawnPill()
     }
 
-    /// Шприц: оверлей `needle` на весь экран, а реакция ВСЕХ бактерий
-    /// (вариации crazy1/crazy2) начинается сразу, не дожидаясь конца иглы —
-    /// иначе укол чувствуется «с опозданием».
+    /// Шприц: оверлей `needle`, реакция всех бактерий ХОРОМ (звук от каждой),
+    /// старт в момент укола (середина клипа иглы), кулдаун до конца реакции.
     @objc private func giveInjection() {
-        guard recorder.state == .idle else { return }
+        guard recorder.state == .idle, !injectionBusy else { return }
+        injectionBusy = true
         removePill()
-        if let needle = ClipLibrary.shared.clip(ClipName.needle) {
+        let needle = ClipLibrary.shared.clip(ClipName.needle)
+        // момент укола — примерно середина клипа иглы
+        let needleFrames = needle?.frameCount ?? 51
+        let stabDelay = Double(needleFrames) / 2.0 / 15.0
+        if let needle {
             needleView.isHidden = false
-            needleView.play(needle, repeats: 1, fps: 22, completion: { [weak self] in
+            needleView.play(needle, repeats: 1, fps: 15, completion: { [weak self] in
                 guard let self else { return }
                 self.needleView.isHidden = true
                 self.needleView.stopAndReset()
             })
         }
-        // реагируют все свободные бактерии, волной
+        // все свободные бактерии реагируют хором в момент укола
         let free = bacteriaViews.filter { !isBacteriaBusy($0) }
-        for (offset, bacteria) in free.enumerated() {
-            let delay = Double(offset) * 0.12
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak bacteria] in
-                guard let self, let bacteria, self.bacteriaViews.contains(where: { $0 === bacteria }),
-                      !self.isBacteriaBusy(bacteria),
-                      let reaction = self.injectionPool.next() else { return }
-                self.perform(reaction, on: bacteria)
+        let reactionDuration = 56.0 / 16.0 // crazy1 ~56 кадров @16fps
+        DispatchQueue.main.asyncAfter(deadline: .now() + stabDelay) { [weak self] in
+            guard let self else { return }
+            for bacteria in free where self.bacteriaViews.contains(where: { $0 === bacteria })
+                && !self.isBacteriaBusy(bacteria) {
+                if let reaction = self.injectionPool.next() {
+                    self.perform(reaction, on: bacteria)
+                }
             }
+        }
+        // кулдаун: игла + реакция
+        let cooldown = stabDelay + reactionDuration + 0.3
+        DispatchQueue.main.asyncAfter(deadline: .now() + cooldown) { [weak self] in
+            self?.injectionBusy = false
         }
     }
 
@@ -707,18 +740,14 @@ final class GameViewController: UIViewController {
     private func spawnPill() {
         guard !pillOnScreen else { return }
         pillOnScreen = true
+        pillVictim = nil
+        pillLastInteraction = Date()
         let side = 50 * scale
         pillView.bounds = CGRect(x: 0, y: 0, width: side, height: side)
         pillView.center = CGPoint(x: stageView.bounds.midX, y: stageView.bounds.midY)
-        pillView.alpha = 0
-        pillView.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
+        pillView.alpha = 1
+        pillView.transform = .identity
         pillView.isHidden = false
-
-        UIView.animate(withDuration: 0.28, delay: 0, usingSpringWithDamping: 0.6,
-                       initialSpringVelocity: 0.5, options: []) {
-            self.pillView.alpha = 1
-            self.pillView.transform = .identity
-        }
         pillVelocity = .zero
         startPillPhysics()
     }
@@ -726,11 +755,14 @@ final class GameViewController: UIViewController {
     private func removePill() {
         stopPillPhysics()
         pillOnScreen = false
+        pillVictim = nil
         pillView.isHidden = true
+        pillView.alpha = 1
         pillView.transform = .identity
     }
 
-    /// Свайп: тащим таблетку ИЛИ бактерию пальцем, при отпускании летит по инерции.
+    /// Свайп: таблетку тащим пальцем, бактерию — только толкаем (не фулл-таскание,
+    /// как в оригинале). Бактерию нельзя занести на мембрану или за края поля.
     @objc private func handleDragPan(_ gesture: UIPanGestureRecognizer) {
         let location = gesture.location(in: stageView)
         switch gesture.state {
@@ -738,19 +770,18 @@ final class GameViewController: UIViewController {
             if pillOnScreen, pillView.frame.insetBy(dx: -24, dy: -24).contains(location) {
                 draggedBacteria = nil
                 stopPillPhysics()
+                pillLastInteraction = Date()
                 dragLastPoint = location
                 dragLastTime = CACurrentMediaTime()
                 dragVelocity = .zero
             } else if let grabbed = bacteriaViews.last(where: {
                 $0.frame.insetBy(dx: -10, dy: -10).contains(location)
-            }) {
+            }), !isBacteriaBusy(grabbed) {
+                // бактерию не тащим — запоминаем старт для толчка
                 draggedBacteria = grabbed
-                dragOffset = CGPoint(x: location.x - grabbed.center.x,
-                                     y: location.y - grabbed.center.y)
                 dragLastPoint = location
                 dragLastTime = CACurrentMediaTime()
                 dragVelocity = .zero
-                setBacteriaVelocity(.zero, for: grabbed)
             } else {
                 draggedBacteria = nil
                 gesture.state = .failed
@@ -762,30 +793,41 @@ final class GameViewController: UIViewController {
                                    y: (location.y - dragLastPoint.y) / dt)
             dragLastPoint = location
             dragLastTime = now
-            if let grabbed = draggedBacteria {
-                grabbed.center = CGPoint(x: location.x - dragOffset.x, y: location.y - dragOffset.y)
+            if draggedBacteria != nil {
+                // бактерию не перемещаем за пальцем — только копим скорость толчка
             } else if pillOnScreen {
-                pillView.center = location
+                pillView.center = clampToField(location, half: pillView.bounds.width / 2)
+                pillLastInteraction = Date()
             }
         case .ended, .cancelled:
-            let fling = CGPoint(x: dragVelocity.x * 0.35, y: dragVelocity.y * 0.35)
+            let fling = CGPoint(x: dragVelocity.x * 0.5, y: dragVelocity.y * 0.5)
             if let grabbed = draggedBacteria {
-                // бактерия летит по инерции, потом снова начинает медленно ездить
                 draggedBacteria = nil
-                // если реально толкнули (быстрый флинг) — копим толчок toward смеха
-                if hypot(fling.x, fling.y) > 60 * scale, !isBacteriaBusy(grabbed) {
+                // толчок бактерии в направлении свайпа (не фулл-перемещение)
+                if hypot(fling.x, fling.y) > 30 * scale {
                     pokeBacteria(grabbed, kickVelocity: fling)
-                } else {
-                    setBacteriaVelocity(fling, for: grabbed)
                 }
             } else if pillOnScreen {
                 pillVelocity = fling
+                pillLastInteraction = Date()
                 startPillPhysics()
             }
             dragVelocity = .zero
         default:
             break
         }
+    }
+
+    /// Ограничивает точку полем бактерий (не в кнопки, не в мембрану).
+    private func clampToField(_ point: CGPoint, half: CGFloat) -> CGPoint {
+        clampToField(point, halfW: half, halfH: half)
+    }
+
+    private func clampToField(_ point: CGPoint, halfW: CGFloat, halfH: CGFloat) -> CGPoint {
+        let field = bacteriaField()
+        let x = min(max(point.x, field.minX + halfW), field.maxX - halfW)
+        let y = min(max(point.y, field.minY + halfH), field.maxY - halfH)
+        return CGPoint(x: x, y: y)
     }
 
     private func setBacteriaVelocity(_ velocity: CGPoint, for bacteria: BacteriaView) {
@@ -891,8 +933,14 @@ final class GameViewController: UIViewController {
                     let push = (minDist - dist) * 0.5
                     let nx = dx / dist
                     let ny = dy / dist
-                    if !isBacteriaBusy(a) { a.center.x -= nx * push; a.center.y -= ny * push }
-                    if !isBacteriaBusy(b) { b.center.x += nx * push; b.center.y += ny * push }
+                    if !isBacteriaBusy(a) {
+                        a.center = clampToField(CGPoint(x: a.center.x - nx * push, y: a.center.y - ny * push),
+                                                halfW: a.bounds.width * 0.42, halfH: a.bounds.height * 0.42)
+                    }
+                    if !isBacteriaBusy(b) {
+                        b.center = clampToField(CGPoint(x: b.center.x + nx * push, y: b.center.y + ny * push),
+                                                halfW: b.bounds.width * 0.42, halfH: b.bounds.height * 0.42)
+                    }
                 }
             }
         }
@@ -939,6 +987,12 @@ final class GameViewController: UIViewController {
         let dt = min(link.timestamp - pillLastTimestamp, 1.0 / 30.0)
         pillLastTimestamp = link.timestamp
 
+        // долгое бездействие — таблетка исчезает (как в оригинале)
+        if Date().timeIntervalSince(pillLastInteraction) > pillIdleTimeout {
+            removePill()
+            return
+        }
+
         var center = pillView.center
         center.x += pillVelocity.x * dt
         center.y += pillVelocity.y * dt
@@ -959,30 +1013,42 @@ final class GameViewController: UIViewController {
         }
         pillView.center = center
 
-        // Попадание в бактерию — _bacteriaRadiusAndPillSquared.
+        // Попадание в бактерию — только если она не занята (не умирает уже).
         if let victim = bacteriaViews.first(where: { bacteria in
+            guard !isBacteriaBusy(bacteria) else { return false }
             let dx = center.x - bacteria.frame.midX
             let dy = center.y - bacteria.frame.midY
             let hitRadius = bacteria.frame.width * 0.42 + radius
             return dx * dx + dy * dy < hitRadius * hitRadius
         }) {
             consumePill(on: victim)
-            return
         }
-        if abs(pillVelocity.x) < 4 && abs(pillVelocity.y) < 4 {
+        // display link не останавливаем при покое: таблетка живёт и ждёт
+        // взаимодействия или таймаута бездействия
+        if abs(pillVelocity.x) < 2 && abs(pillVelocity.y) < 2 {
             pillVelocity = .zero
-            stopPillPhysics()
         }
     }
 
     /// Таблетка попала в бактерию: бактерия рассыпается пузырями и погибает.
-    /// Таблетка одноразовая — исчезает сразу, колония продолжает жить.
+    /// Таблетка НЕ одноразовая — отскакивает и живёт дальше, пока с ней что-то
+    /// делают; исчезает только по таймауту бездействия.
     private func consumePill(on victim: BacteriaView) {
-        stopPillPhysics()
-        pillOnScreen = false
-        pillView.isHidden = true
-        pillView.transform = .identity
+        // защита: одна бактерия не может умирать от таблетки повторно
+        guard pillVictim !== victim, !isBacteriaBusy(victim) else { return }
+        pillVictim = victim
+        pillLastInteraction = Date()
+        // таблетка отскакивает от жертвы и продолжает жить
+        let dx = pillView.center.x - victim.center.x
+        let dy = pillView.center.y - victim.center.y
+        let len = max(hypot(dx, dy), 1)
+        let bounce: CGFloat = 260 * scale
+        pillVelocity = CGPoint(x: dx / len * bounce, y: dy / len * bounce)
         popBacteria(victim)
+        // после смерти жертвы таблетка снова может убивать других
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            if self?.pillVictim === victim { self?.pillVictim = nil }
+        }
     }
 
     // MARK: - Покой
@@ -1089,39 +1155,15 @@ final class GameViewController: UIViewController {
     private func handleSceneRecorderState(_ state: SceneRecorder.State) {
         switch state {
         case .recording:
-            showRecordingBadge()
-            recordButton.setImage(recordFrames.last, for: .normal)
+            // мигание изнутри кнопки кадрами RecButton, как в оригинале
+            startRecordAnimation()
         case .saving:
-            recordingBadge?.removeFromSuperview()
-            recordingBadge = nil
+            stopRecordAnimation()
         case .idle:
-            recordingBadge?.removeFromSuperview()
-            recordingBadge = nil
-            recordButton.setImage(recordFrames.first, for: .normal)
+            stopRecordAnimation()
         case .failed(let message):
-            recordingBadge?.removeFromSuperview()
-            recordingBadge = nil
-            recordButton.setImage(recordFrames.first, for: .normal)
+            stopRecordAnimation()
             NSLog("Запись видео: \(message)")
-        }
-    }
-
-    private func showRecordingBadge() {
-        recordingBadge?.removeFromSuperview()
-        let badge = UIView()
-        badge.backgroundColor = UIColor(red: 0.85, green: 0.1, blue: 0.1, alpha: 1)
-        badge.layer.cornerRadius = 7
-        badge.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(badge)
-        NSLayoutConstraint.activate([
-            badge.widthAnchor.constraint(equalToConstant: 14),
-            badge.heightAnchor.constraint(equalToConstant: 14),
-            badge.centerXAnchor.constraint(equalTo: recordButton.centerXAnchor),
-            badge.topAnchor.constraint(equalTo: recordButton.bottomAnchor, constant: 4)
-        ])
-        recordingBadge = badge
-        UIView.animate(withDuration: 0.6, delay: 0, options: [.repeat, .autoreverse]) {
-            badge.alpha = 0.25
         }
     }
 
@@ -1202,13 +1244,24 @@ final class GameViewController: UIViewController {
         startIdle()
     }
 
+    /// Мигание кнопки записи изнутри кадрами RecButton — три прохода, как в
+    /// оригинале (не внешний кружок). Управление при этом не блокируется.
     private func startRecordAnimation() {
         stopRecordAnimation()
+        guard !recordFrames.isEmpty else { return }
         recordFrameIndex = 0
-        recordAnimationTimer = Timer.scheduledTimer(withTimeInterval: 0.22, repeats: true) { [weak self] _ in
-            guard let self, !self.recordFrames.isEmpty else { return }
-            self.recordFrameIndex = (self.recordFrameIndex + 1) % self.recordFrames.count
+        var ticks = 0
+        let totalTicks = recordFrames.count * 3
+        recordAnimationTimer = Timer.scheduledTimer(withTimeInterval: 0.18, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
             self.recordButton.setImage(self.recordFrames[self.recordFrameIndex], for: .normal)
+            self.recordFrameIndex = (self.recordFrameIndex + 1) % self.recordFrames.count
+            ticks += 1
+            if ticks >= totalTicks {
+                timer.invalidate()
+                self.recordAnimationTimer = nil
+                self.recordButton.setImage(self.recordFrames.first, for: .normal)
+            }
         }
     }
 

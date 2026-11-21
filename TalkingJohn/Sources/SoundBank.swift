@@ -93,7 +93,7 @@ final class EffectPlayer {
     private var nextPlayer = 0
     private let format: AVAudioFormat
 
-    init(engine: AVAudioEngine, format: AVAudioFormat, voices: Int = 4) {
+    init(engine: AVAudioEngine, format: AVAudioFormat, voices: Int = 8) {
         self.engine = engine
         self.format = format
         for _ in 0..<voices {

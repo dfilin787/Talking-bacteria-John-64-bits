@@ -25,11 +25,11 @@ final class VoiceRecorder {
     }
 
     struct Settings {
-        var maxDuration: TimeInterval = 8
+        var maxDuration: TimeInterval = 10
         /// Порог RMS, ниже которого считается тишиной.
-        var noiseGate: Float = 0.012
-        /// Сколько секунд тишины подряд завершают запись.
-        var silenceTimeout: TimeInterval = 1.1
+        var noiseGate: Float = 0.010
+        /// Сколько секунд тишины подряд завершают запись (после того как голос был).
+        var silenceTimeout: TimeInterval = 1.4
         /// Насколько поднять голос, в полутонах.
         var pitchSemitones: Double = 9
         var volume: Float = 1.0
@@ -47,6 +47,8 @@ final class VoiceRecorder {
     private var captureStartedAt = Date()
     private var lastVoiceAt = Date()
     private var silenceStopScheduled = false
+    /// Был ли хоть какой-то голос за время прослушки — авто-стоп только после него.
+    private var heardVoice = false
 
     var settings = Settings()
     private(set) var state: State = .idle
@@ -87,6 +89,7 @@ final class VoiceRecorder {
         // Состояние меняется только на главном потоке; аудиопоток лишь читает isCapturing.
         isCapturing = true
         silenceStopScheduled = false
+        heardVoice = false
         captureStartedAt = Date()
         lastVoiceAt = Date()
         level = 0
@@ -192,9 +195,12 @@ final class VoiceRecorder {
 
         let elapsed = Date().timeIntervalSince(captureStartedAt)
         let voiced = rms > settings.noiseGate
-        if voiced { lastVoiceAt = Date() }
+        if voiced { lastVoiceAt = Date(); heardVoice = true }
         let silence = Date().timeIntervalSince(lastVoiceAt)
-        let shouldStop = elapsed >= settings.maxDuration || (silence >= settings.silenceTimeout && elapsed > 0.6)
+        // авто-стоп по тишине только после того, как голос реально был;
+        // иначе ждём, пока пользователь заговорит (до maxDuration)
+        let shouldStop = elapsed >= settings.maxDuration
+            || (heardVoice && silence >= settings.silenceTimeout)
 
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isCapturing else { return }
