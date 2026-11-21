@@ -40,7 +40,6 @@ final class GameViewController: UIViewController {
     private let queue = DispatchQueue(label: "john.audio", qos: .userInitiated)
     private var effects: EffectPlayer?
     private var recorder: VoiceRecorder!
-    private var sceneRecorder: SceneRecorder!
     /// Бактерия, которая слушает/повторяет голос (долгое нажатие на камеру).
     private var talker: BacteriaView?
     /// Счётчик толчков по бактерии: смех не моментальный, а после 2-3 толчков,
@@ -131,7 +130,6 @@ final class GameViewController: UIViewController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        if sceneRecorder.isRecording { sceneRecorder.stop() }
         recorder.stopEverything()
         stopEffects()
         stopIdle()
@@ -146,7 +144,6 @@ final class GameViewController: UIViewController {
     }
 
     func pauseForBackground() {
-        if sceneRecorder.isRecording { sceneRecorder.cancel() }
         recorder.stopEverything()
         stopEffects()
         stopIdle()
@@ -302,9 +299,9 @@ final class GameViewController: UIViewController {
     private func bacteriaField() -> CGRect {
         let w = stageView.bounds.width
         let h = stageView.bounds.height
-        let top = max(view.safeAreaInsets.top, 12) + 8
+        let top = max(view.safeAreaInsets.top, 12)
         let bottom = h * membraneFraction
-        return CGRect(x: 8, y: top, width: max(w - 16, 100), height: max(bottom - top, 100))
+        return CGRect(x: 0, y: top, width: max(w, 100), height: max(bottom - top, 100))
     }
 
     /// Скорость блуждания в экранных точках/с — бактерии заметно, но плавно ездят.
@@ -321,9 +318,6 @@ final class GameViewController: UIViewController {
         recordButton.setBackgroundImage(recordFrames.first, for: .normal)
         recordButton.addTarget(self, action: #selector(toggleRecording), for: .touchUpInside)
         recordButton.accessibilityLabel = "Записать голос"
-        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleRecordLongPress(_:)))
-        longPress.minimumPressDuration = 0.5
-        recordButton.addGestureRecognizer(longPress)
         view.addSubview(recordButton)
 
         configureItem(donutButton, image: "gumb-donut-60", action: #selector(feedDonut), label: "Пончик")
@@ -366,7 +360,7 @@ final class GameViewController: UIViewController {
             } else {
                 let center = CGPoint(x: bacteria.center.x * ratio, y: bacteria.center.y * ratio)
                 bacteria.bounds = CGRect(x: 0, y: 0, width: w, height: h)
-                bacteria.center = clampToField(center, halfW: w * 0.42, halfH: h * 0.42)
+                bacteria.center = clampToField(center, halfW: w * 0.5, halfH: h * 0.5)
                 if index < bacteriaVelocities.count {
                     bacteriaVelocities[index].x *= ratio
                     bacteriaVelocities[index].y *= ratio
@@ -384,7 +378,7 @@ final class GameViewController: UIViewController {
         }
 
         // Кнопки средние (не мелкие и не огромные): backgroundImage на весь фрейм.
-        let side = max(72 * scale, 64)
+        let side = max(96 * scale, 84)
         let margin: CGFloat = 8
         let topSafe = max(view.safeAreaInsets.top, 12)
         recordButton.frame = CGRect(x: margin, y: topSafe, width: side, height: side)
@@ -423,13 +417,6 @@ final class GameViewController: UIViewController {
         recorder.onStateChanged = { [weak self] state in
             self?.handleRecorderState(state)
         }
-        sceneRecorder = SceneRecorder(engine: audioEngine, graphQueue: queue)
-        sceneRecorder.onStateChanged = { [weak self] state in
-            self?.handleSceneRecorderState(state)
-        }
-        sceneRecorder.onSaved = { [weak self] in
-            self?.flashSavedBadge()
-        }
     }
 
     // MARK: - Реакции
@@ -462,25 +449,12 @@ final class GameViewController: UIViewController {
                 bacteriaVelocities[index] = CGPoint(x: cos(angle) * kick, y: sin(angle) * kick)
             }
         }
-        // смех только от толчка, заразный
-        spreadLaugh(from: target)
-    }
-
-    /// Заразный смех: источник + все свободные соседи (spreadLaughAnimationWithSource:).
-    /// Смех неэксклюзивный — во время него бактерию можно трогать и колоть.
-    private func spreadLaugh(from source: BacteriaView) {
-        guard let reaction = laughPool.next() else { return }
-        perform(reaction, on: source, exclusive: false)
-        for other in bacteriaViews where other !== source && !isBacteriaBusy(other) {
-            // небольшая задержка, чтобы смех расходился волной, а не хором в один кадр
-            let delay = Double.random(in: 0.05...0.25)
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak other] in
-                guard let self, let other, self.bacteriaViews.contains(where: { $0 === other }),
-                      !self.isBacteriaBusy(other), let r = self.laughPool.next() else { return }
-                self.perform(r, on: other, exclusive: false)
-            }
+        // смеётся только толкнутая бактерия, без хора
+        if let reaction = laughPool.next() {
+            perform(reaction, on: target, exclusive: false)
         }
     }
+
 
     /// Пончик: бактерия ест случайный пончик, затем делится. Одновременно едят
     /// не больше двух бактерий (как в оригинале — чтобы не превысить лимит 6).
@@ -917,11 +891,11 @@ final class GameViewController: UIViewController {
                     let ny = dy / dist
                     if !isBacteriaBusy(a) {
                         a.center = clampToField(CGPoint(x: a.center.x - nx * push, y: a.center.y - ny * push),
-                                                halfW: a.bounds.width * 0.42, halfH: a.bounds.height * 0.42)
+                                                halfW: a.bounds.width * 0.5, halfH: a.bounds.height * 0.5)
                     }
                     if !isBacteriaBusy(b) {
                         b.center = clampToField(CGPoint(x: b.center.x + nx * push, y: b.center.y + ny * push),
-                                                halfW: b.bounds.width * 0.42, halfH: b.bounds.height * 0.42)
+                                                halfW: b.bounds.width * 0.5, halfH: b.bounds.height * 0.5)
                     }
                 }
             }
@@ -948,8 +922,8 @@ final class GameViewController: UIViewController {
             }
 
             // границы поля: не в кнопки, не в мембрану/жёлтый слой
-            let halfW = bacteria.bounds.width * 0.42
-            let halfH = bacteria.bounds.height * 0.42
+            let halfW = bacteria.bounds.width * 0.5
+            let halfH = bacteria.bounds.height * 0.5
             if center.x < field.minX + halfW { center.x = field.minX + halfW; v.x = abs(v.x) }
             if center.x > field.maxX - halfW { center.x = field.maxX - halfW; v.x = -abs(v.x) }
             if center.y < field.minY + halfH { center.y = field.minY + halfH; v.y = abs(v.y) }
@@ -1079,11 +1053,10 @@ final class GameViewController: UIViewController {
         })
     }
 
-    // MARK: - Запись видео (кнопка-камера)
+    // MARK: - Запись голоса (кнопка-камера)
 
     /// Тап по камере — повтор голоса (как в оригинале Talking): слушает → говорит.
     @objc private func toggleRecording() {
-        guard !sceneRecorder.isRecording else { return }
         switch recorder.state {
         case .listening:
             recorder.stopListeningAndSpeak()
@@ -1110,68 +1083,8 @@ final class GameViewController: UIViewController {
         }
     }
 
-    /// Долгое нажатие на камеру — видеозапись сцены со звуком в Фото.
-    @objc private func handleRecordLongPress(_ gesture: UILongPressGestureRecognizer) {
-        guard gesture.state == .began, recorder.state == .idle else { return }
-        if sceneRecorder.isRecording {
-            sceneRecorder.stop()
-            return
-        }
-        requestMicrophone { [weak self] granted in
-            guard let self, granted else { return }
-            self.queue.async { [weak self] in
-                guard let self else { return }
-                do {
-                    let session = AVAudioSession.sharedInstance()
-                    try session.setCategory(.playAndRecord, mode: .default,
-                                            options: [.defaultToSpeaker, .allowBluetoothA2DP])
-                    try session.setActive(true)
-                    if !self.audioEngine.isRunning { try self.audioEngine.start() }
-                } catch { return }
-                DispatchQueue.main.async { self.sceneRecorder.start(capturing: self.stageView) }
-            }
-        }
-    }
 
-    private func handleSceneRecorderState(_ state: SceneRecorder.State) {
-        switch state {
-        case .recording:
-            // мигание изнутри кнопки кадрами RecButton, как в оригинале
-            startRecordAnimation()
-        case .saving:
-            stopRecordAnimation()
-        case .idle:
-            stopRecordAnimation()
-        case .failed(let message):
-            stopRecordAnimation()
-            NSLog("Запись видео: \(message)")
-        }
-    }
 
-    private func flashSavedBadge() {
-        let label = UILabel()
-        label.text = "Сохранено в Фото"
-        label.font = .systemFont(ofSize: 15, weight: .semibold)
-        label.textColor = .white
-        label.backgroundColor = UIColor(white: 0, alpha: 0.65)
-        label.textAlignment = .center
-        label.layer.cornerRadius = 12
-        label.clipsToBounds = true
-        label.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            label.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
-            label.widthAnchor.constraint(equalToConstant: 180),
-            label.heightAnchor.constraint(equalToConstant: 34)
-        ])
-        label.alpha = 0
-        UIView.animate(withDuration: 0.25, animations: { label.alpha = 1 }) { _ in
-            UIView.animate(withDuration: 0.4, delay: 1.4) { label.alpha = 0 } completion: { _ in
-                label.removeFromSuperview()
-            }
-        }
-    }
 
     private func requestMicrophone(_ completion: @escaping (Bool) -> Void) {
         if #available(iOS 17.0, *) {
