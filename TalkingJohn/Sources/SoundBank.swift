@@ -111,7 +111,6 @@ final class EffectPlayer {
     ///   именно этот звук при прерывании анимации (не глуша соседей).
     @discardableResult
     func play(_ buffer: AVAudioPCMBuffer, volume: Float = 1.0) -> (TimeInterval, Int) {
-        let duration = Double(buffer.frameLength) / buffer.format.sampleRate
         guard !players.isEmpty else { return (0, -1) }
         if !engine.isRunning {
             do { try engine.start() } catch { return (0, -1) }
@@ -121,14 +120,20 @@ final class EffectPlayer {
         nextPlayer = (nextPlayer + 1) % players.count
         node.stop()
         node.volume = volume
-        node.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
+        // Формат узла = формат микшера, который задаёт вход микрофона (48 кГц).
+        // Буфер 44.1 кГц без конверсии ломает граф вместе с tap'ом прослушки.
+        let mixerFormat = engine.mainMixerNode.outputFormat(forBus: 0)
+        let prepared = (mixerFormat.sampleRate > 0
+            ? SoundBank.convert(buffer, to: mixerFormat) : nil) ?? buffer
+        let playedDuration = Double(prepared.frameLength) / prepared.format.sampleRate
+        node.scheduleBuffer(prepared, at: nil, options: .interrupts, completionHandler: nil)
         node.play()
         // AVAudioPlayerNode.isPlaying остаётся true и после окончания буфера,
         // поэтому окончание считаем по времени, а не по флагу узла.
         deadlinesLock.lock()
-        deadlines[index] = CACurrentMediaTime() + duration
+        deadlines[index] = CACurrentMediaTime() + playedDuration
         deadlinesLock.unlock()
-        return (duration, index)
+        return (playedDuration, index)
     }
 
     /// Обрезает один голос (звук прерванной анимации), не трогая остальные.

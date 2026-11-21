@@ -166,7 +166,7 @@ final class GameViewController: UIViewController {
             do {
                 let session = AVAudioSession.sharedInstance()
                 try session.setCategory(.playAndRecord, mode: .default,
-                                        options: [.defaultToSpeaker, .allowBluetoothA2DP])
+                                        options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
                 try session.setActive(true)
                 if !self.audioEngine.isRunning { try self.audioEngine.start() }
             } catch {
@@ -185,8 +185,9 @@ final class GameViewController: UIViewController {
     private func stopEffects() {
         queue.async { [weak self] in
             guard let self else { return }
+            // Только глушим эффекты. pause() останавливал и вход микрофона
+            // вместе с tap'ом, и постоянная прослушка умирала молча.
             self.effects?.stopAll()
-            if self.audioEngine.isRunning { self.audioEngine.pause() }
         }
     }
 
@@ -390,7 +391,7 @@ final class GameViewController: UIViewController {
             SoundBank.shared.preloadAll()
             do {
                 try AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .default,
-                                                                options: [.defaultToSpeaker, .allowBluetoothA2DP])
+                                                                options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
                 try AVAudioSession.sharedInstance().setActive(true)
                 self.audioEngine.prepare()
                 try self.audioEngine.start()
@@ -1118,7 +1119,7 @@ final class GameViewController: UIViewController {
                 do {
                     let session = AVAudioSession.sharedInstance()
                     try session.setCategory(.playAndRecord, mode: .default,
-                                            options: [.defaultToSpeaker, .allowBluetoothA2DP])
+                                            options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
                     try session.setActive(true)
                 } catch { return }
                 self.recorder.beginListening()

@@ -193,10 +193,19 @@ final class VoiceRecorder {
         collector.append(mono)
 
         var rms: Float = 0
-        if let channel = mono.floatChannelData?.pointee, mono.frameLength > 0 {
+        let count = Int(mono.frameLength)
+        if count > 0, let channel = mono.floatChannelData?.pointee {
             var sum: Float = 0
-            let count = Int(mono.frameLength)
             for i in 0..<count { sum += channel[i] * channel[i] }
+            rms = (sum / Float(count)).squareRoot()
+        } else if count > 0, let channel = mono.int16ChannelData?.pointee {
+            // int16-вход: без этой ветки RMS всегда 0 и голос не детектился
+            var sum: Float = 0
+            let scale: Float = 1.0 / 32768.0
+            for i in 0..<count {
+                let v = Float(channel[i]) * scale
+                sum += v * v
+            }
             rms = (sum / Float(count)).squareRoot()
         }
 
@@ -289,11 +298,19 @@ final class SampleCollector {
     }
 
     func append(_ buffer: AVAudioPCMBuffer) {
-        guard let channel = buffer.floatChannelData?.pointee, samples.count < limit else { return }
+        guard samples.count < limit, buffer.frameLength > 0 else { return }
         let room = limit - samples.count
         let count = min(Int(buffer.frameLength), room)
         guard count > 0 else { return }
-        samples.append(contentsOf: UnsafeBufferPointer(start: channel, count: count))
+        // Микрофон часто отдаёт int16, а не float: floatChannelData тогда nil,
+        // и сэмплы не копились вообще — повтор был пустым. Читаем оба формата.
+        if let channel = buffer.floatChannelData?.pointee {
+            samples.append(contentsOf: UnsafeBufferPointer(start: channel, count: count))
+        } else if let channel = buffer.int16ChannelData?.pointee {
+            let scale: Float = 1.0 / 32768.0
+            samples.reserveCapacity(samples.count + count)
+            for i in 0..<count { samples.append(Float(channel[i]) * scale) }
+        }
     }
 
     var duration: TimeInterval { Double(samples.count) / sampleRate }
