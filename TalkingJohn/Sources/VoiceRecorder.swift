@@ -269,12 +269,10 @@ final class VoiceRecorder {
             for i in from..<to { sum += channel[i] * channel[i] }
             return (sum / Float(n)).squareRoot()
         }
-        var start = 0
-        while start + window <= total && rms(start, start + window) < cutGate { start += window }
-        start = max(0, start - padFrames)
+        let start = 0
         var end = total
         while end - window >= start && rms(end - window, end) < cutGate { end -= window }
-        end = min(total, end + padFrames / 2)
+        end = min(total, end + padFrames)
         let frames = end - start
         guard frames > window, frames < total,
               let copy = AVAudioPCMBuffer(pcmFormat: buffer.format,

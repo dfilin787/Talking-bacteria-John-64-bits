@@ -1051,9 +1051,7 @@ final class GameViewController: UIViewController {
         case .idle:
             finishVoiceRepeat()
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-                self?.startAlwaysListening()
-            }
+            self.startAlwaysListening()
         case .listening:
             if let listen = ClipLibrary.shared.clip(ClipName.listen) {
                 let free = bacteriaViews.filter { isFreeForIdle($0) }
