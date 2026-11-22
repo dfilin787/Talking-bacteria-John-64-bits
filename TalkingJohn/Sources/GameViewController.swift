@@ -33,12 +33,16 @@ final class GameViewController: UIViewController {
     private var busyBacteria = Set<ObjectIdentifier>()
 
     private var reactingBacteria = Set<ObjectIdentifier>()
+    private var voiceBacteria = Set<ObjectIdentifier>()
+    private func isVoiceActive(_ view: BacteriaView) -> Bool {
+        voiceBacteria.contains(ObjectIdentifier(view))
+    }
     private func isReacting(_ view: BacteriaView) -> Bool {
         reactingBacteria.contains(ObjectIdentifier(view))
     }
 
     private func isFreeForIdle(_ view: BacteriaView) -> Bool {
-        !isBacteriaBusy(view) && !isReacting(view)
+        !isBacteriaBusy(view) && !isReacting(view) && !isVoiceActive(view)
     }
     private func isBacteriaBusy(_ view: BacteriaView) -> Bool {
         busyBacteria.contains(ObjectIdentifier(view))
@@ -128,6 +132,7 @@ final class GameViewController: UIViewController {
         draggedBacteria = nil
         busyBacteria.removeAll()
         reactingBacteria.removeAll()
+        voiceBacteria.removeAll()
         talkers = []
 
         eatingCount = 0
@@ -501,6 +506,7 @@ final class GameViewController: UIViewController {
     }
 
     private func interruptVoice(for target: BacteriaView) {
+        voiceBacteria.remove(ObjectIdentifier(target))
         reactingBacteria.remove(ObjectIdentifier(target))
         talkers.removeAll { $0 === target }
     }
@@ -531,6 +537,7 @@ final class GameViewController: UIViewController {
         target.removeFromSuperview()
         busyBacteria.remove(ObjectIdentifier(target))
         reactingBacteria.remove(ObjectIdentifier(target))
+        voiceBacteria.remove(ObjectIdentifier(target))
         if let index = bacteriaViews.firstIndex(where: { $0 === target }) {
             bacteriaViews.remove(at: index)
             if index < bacteriaVelocities.count { bacteriaVelocities.remove(at: index) }
@@ -558,7 +565,7 @@ final class GameViewController: UIViewController {
         let view = target ?? bacteriaViews.randomElement()
         guard let view, !isBacteriaBusy(view) else { return }
         if exclusive { busyBacteria.insert(ObjectIdentifier(view)) }
-        talkers.removeAll { $0 === view }
+        interruptVoice(for: view)
         reactingBacteria.insert(ObjectIdentifier(view))
 
         let picker = soundPicker(for: reaction)
@@ -663,7 +670,7 @@ final class GameViewController: UIViewController {
     }
 
     private func resumeIdle(for view: BacteriaView) {
-        guard isFreeForIdle(view) else { return }
+        guard !isVoiceActive(view), isFreeForIdle(view) else { return }
         if let base = ClipLibrary.shared.clip(ClipName.idleBase) {
             view.play(base, repeats: 0, fps: 8)
         }
@@ -1052,14 +1059,14 @@ final class GameViewController: UIViewController {
                 let free = bacteriaViews.filter { isFreeForIdle($0) }
                 talkers = free
                 for view in free {
-                    reactingBacteria.insert(ObjectIdentifier(view))
+                    voiceBacteria.insert(ObjectIdentifier(view))
                     view.play(listen, repeats: 0, fps: 8)
                 }
             }
         case .speaking:
             if let talk = ClipLibrary.shared.clip(ClipName.talk) {
                 for view in talkers where bacteriaViews.contains(where: { $0 === view }) {
-                    reactingBacteria.insert(ObjectIdentifier(view))
+                    voiceBacteria.insert(ObjectIdentifier(view))
                     view.play(talk, repeats: 0, fps: 14)
                 }
             }
@@ -1074,10 +1081,12 @@ final class GameViewController: UIViewController {
 
     private func finishVoiceRepeat() {
         for view in talkers {
+            voiceBacteria.remove(ObjectIdentifier(view))
             reactingBacteria.remove(ObjectIdentifier(view))
             resumeIdle(for: view)
         }
         talkers = []
+        voiceBacteria.removeAll()
     }
 
     @objc private func itemTouchDown(_ sender: UIButton) {
