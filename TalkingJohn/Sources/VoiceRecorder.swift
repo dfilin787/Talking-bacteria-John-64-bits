@@ -27,7 +27,7 @@ final class VoiceRecorder {
     struct Settings {
         var maxDuration: TimeInterval = 10
         /// Порог RMS, ниже которого считается тишиной.
-        var noiseGate: Float = 0.012
+        var noiseGate: Float = 0.030
         /// Сколько секунд тишины подряд завершают запись (после того как голос был).
         var silenceTimeout: TimeInterval = 1.0
         /// Насколько поднять голос, в полутонах.
@@ -179,8 +179,11 @@ final class VoiceRecorder {
 
         processingQueue.async { [weak self] in
             guard let self else { return }
+            // Обрезаем тихие края: иначе SoundTouch растягивает «воздух»
+            // и бактерия тянет звук вместо короткого повтора.
+            let trimmed = Self.trimSilence(raw, gate: self.settings.noiseGate) ?? raw
             // Если SoundTouch не отдал сэмплы — играем оригинал, а не молчим.
-            let shifted = Self.applyPitch(to: raw, semitones: pitch) ?? raw
+            let shifted = Self.applyPitch(to: trimmed, semitones: pitch) ?? trimmed
             DispatchQueue.main.async {
                 self.play(shifted, volume: volume)
             }
@@ -288,6 +291,33 @@ final class VoiceRecorder {
                 self.transition(to: .idle)
             }
         }
+    }
+
+    /// Обрезает тихие начало/конец записи (по RMS-окнам 20 мс), чтобы
+    /// SoundTouch не растягивал фоновый воздух в протяжный звук.
+    private static func trimSilence(_ buffer: AVAudioPCMBuffer, gate: Float) -> AVAudioPCMBuffer? {
+        guard let channel = buffer.floatChannelData?.pointee else { return buffer }
+        let total = Int(buffer.frameLength)
+        let window = max(1, Int(buffer.format.sampleRate * 0.02))
+        func rms(_ from: Int, _ to: Int) -> Float {
+            var sum: Float = 0
+            let n = max(1, to - from)
+            for i in from..<to { sum += channel[i] * channel[i] }
+            return (sum / Float(n)).squareRoot()
+        }
+        var start = 0
+        while start + window <= total && rms(start, start + window) < gate { start += window }
+        var end = total
+        while end - window >= start && rms(end - window, end) < gate { end -= window }
+        let frames = end - start
+        guard frames > window, frames < total,
+              let copy = AVAudioPCMBuffer(pcmFormat: buffer.format,
+                                          frameCapacity: AVAudioFrameCount(frames)) else { return buffer }
+        copy.frameLength = AVAudioFrameCount(frames)
+        if let dst = copy.floatChannelData?.pointee {
+            dst.update(from: channel.advanced(by: start), count: frames)
+        }
+        return copy
     }
 
     /// SoundTouch: подъём тона без изменения длительности.
