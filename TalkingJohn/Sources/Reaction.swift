@@ -19,7 +19,7 @@ struct Reaction {
          fps: Double = 15,
          soundFrameStart: Int = 0,
          minRepeats: Int = 1,
-         trimSoundToClip: Bool = false) {
+         trimSoundToClip: Bool = true) {
         self.clipName = clipName
         self.sounds = sounds
         self.fps = fps

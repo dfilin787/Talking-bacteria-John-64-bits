@@ -39,6 +39,8 @@ final class VoiceRecorder {
     private let playerNode = AVAudioPlayerNode()
 
     private var collector: SampleCollector?
+    /// Коллектор текущего tap'а (создаётся на аудио-потоке по формату буфера).
+    private var tapCollector: SampleCollector?
     private let processingQueue = DispatchQueue(label: "john.voice.process", qos: .userInitiated)
     /// Сериализует обращения к графу движка: recorder и эффекты делят один AVAudioEngine.
     private let graphQueue: DispatchQueue
@@ -93,6 +95,8 @@ final class VoiceRecorder {
         isCapturing = true
         silenceStopScheduled = false
         heardVoice = false
+        tapCollector = nil
+        collector = nil
         captureStartedAt = Date()
         lastVoiceAt = Date()
         level = 0
@@ -112,7 +116,16 @@ final class VoiceRecorder {
             // Формат входа читаем ПОСЛЕ запуска движка — до start он может быть
             // нулевым, и tap с неверным форматом ничего не слышит.
             let input = self.engine.inputNode
-            let format = input.outputFormat(forBus: 0)
+            var format = input.outputFormat(forBus: 0)
+            if format.sampleRate <= 0 || format.channelCount == 0 {
+                // Вход ещё не поднят: активируем сессию и читаем нативный формат.
+                try? AVAudioSession.sharedInstance().setActive(true)
+                format = input.inputFormat(forBus: 0)
+            }
+            if format.sampleRate <= 0 || format.channelCount == 0 {
+                format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)
+                    ?? input.outputFormat(forBus: 0)
+            }
             guard format.sampleRate > 0, format.channelCount > 0 else {
                 DispatchQueue.main.async {
                     self.isCapturing = false
@@ -120,13 +133,21 @@ final class VoiceRecorder {
                 }
                 return
             }
-            let collector = SampleCollector(sampleRate: format.sampleRate)
             input.removeTap(onBus: 0)
-            input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-                self?.consume(buffer, into: collector)
+            input.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buffer, _ in
+                guard let self else { return }
+                // tap с nil-форматом отдаёт нативный формат входа: коллектор
+                // создаём по первому буферу, чтобы частота совпала с записью.
+                if self.collector == nil {
+                    let made = SampleCollector(sampleRate: buffer.format.sampleRate)
+                    DispatchQueue.main.async { self.collector = made }
+                    self.tapCollector = made
+                }
+                if let target = self.tapCollector {
+                    self.consume(buffer, into: target)
+                }
             }
             DispatchQueue.main.async {
-                self.collector = collector
                 self.transition(to: .listening)
             }
         }

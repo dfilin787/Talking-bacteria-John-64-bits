@@ -40,10 +40,6 @@ final class GameViewController: UIViewController {
     private var recorder: VoiceRecorder!
     /// Бактерия, которая слушает/повторяет голос (долгое нажатие на камеру).
     private var talker: BacteriaView?
-    /// Индикатор прослушки: видно, доходит ли звук с микрофона.
-    private let micLevelBar = UIView()
-    private let micStateLabel = UILabel()
-    private var micTimer: Timer?
     /// Счётчик толчков по бактерии: смех не моментальный, а после 2-3 толчков,
     /// когда бактерия остановится (как lastLaughTickle/isLaughing в оригинале).
 
@@ -125,7 +121,6 @@ final class GameViewController: UIViewController {
         configureRecorder()
         applyLayout()
         startIdle()
-        buildMicIndicator()
         // повтор голоса всегда активен: слушаем микро постоянно
         startAlwaysListening()
     }
@@ -1172,31 +1167,6 @@ final class GameViewController: UIViewController {
 
 
 
-
-    /// Полоска уровня микрофона + состояние: сразу видно, слышит ли игра.
-    private func buildMicIndicator() {
-        micLevelBar.backgroundColor = UIColor(red: 0.3, green: 1, blue: 0.4, alpha: 0.9)
-        micLevelBar.layer.cornerRadius = 2
-        view.addSubview(micLevelBar)
-        micStateLabel.font = .systemFont(ofSize: 11, weight: .medium)
-        micStateLabel.textColor = UIColor(white: 1, alpha: 0.85)
-        micStateLabel.text = "микро"
-        view.addSubview(micStateLabel)
-        micTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            let level = CGFloat(self.recorder.level)
-            let width = min(max(level * 1200, 2), self.view.bounds.width - 24)
-            let y = self.view.bounds.height - max(self.view.safeAreaInsets.bottom, 8) - 14
-            self.micLevelBar.frame = CGRect(x: 12, y: y, width: width, height: 4)
-            self.micStateLabel.frame = CGRect(x: 12, y: y - 16, width: 200, height: 14)
-            switch self.recorder.state {
-            case .listening: self.micStateLabel.text = String(format: "слушаю %.3f", level)
-            case .speaking: self.micStateLabel.text = "говорю"
-            case .idle: self.micStateLabel.text = "пауза"
-            case .failed(let m): self.micStateLabel.text = "ошибка: \(m)"
-            }
-        }
-    }
 
     private func requestMicrophone(_ completion: @escaping (Bool) -> Void) {
         if #available(iOS 17.0, *) {
