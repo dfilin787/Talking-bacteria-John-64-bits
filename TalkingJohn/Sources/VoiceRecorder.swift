@@ -27,9 +27,9 @@ final class VoiceRecorder {
     struct Settings {
         var maxDuration: TimeInterval = 10
         /// Порог RMS, ниже которого считается тишиной.
-        var noiseGate: Float = 0.010
+        var noiseGate: Float = 0.0035
         /// Сколько секунд тишины подряд завершают запись (после того как голос был).
-        var silenceTimeout: TimeInterval = 1.4
+        var silenceTimeout: TimeInterval = 0.9
         /// Насколько поднять голос, в полутонах.
         var pitchSemitones: Double = 9
         var volume: Float = 1.0
@@ -137,7 +137,11 @@ final class VoiceRecorder {
         let captured = collector
         tearDownCapture()
 
-        guard let captured, captured.duration >= 0.25, let raw = captured.makeBuffer() else {
+        // Повторяем только если реально был голос. Иначе рекордер «говорил»
+        // 10 секунд тишины (maxDuration), микрофон в это время выключен —
+        // пользователь говорил в пустоту и его никто не слушал.
+        guard heardVoice, let captured, captured.duration >= 0.25,
+              let raw = captured.makeBuffer() else {
             transition(to: .idle)
             return
         }

@@ -40,6 +40,10 @@ final class GameViewController: UIViewController {
     private var recorder: VoiceRecorder!
     /// Бактерия, которая слушает/повторяет голос (долгое нажатие на камеру).
     private var talker: BacteriaView?
+    /// Индикатор прослушки: видно, доходит ли звук с микрофона.
+    private let micLevelBar = UIView()
+    private let micStateLabel = UILabel()
+    private var micTimer: Timer?
     /// Счётчик толчков по бактерии: смех не моментальный, а после 2-3 толчков,
     /// когда бактерия остановится (как lastLaughTickle/isLaughing в оригинале).
 
@@ -53,6 +57,17 @@ final class GameViewController: UIViewController {
     /// Смех и idle-кивки НЕ блокируют: во время них бактерию можно трогать,
     /// колоть и толкать — как в оригинале (иначе шприц «через раз»).
     private var busyBacteria = Set<ObjectIdentifier>()
+    /// Бактерии, у которых сейчас играет реакция (смех/укол/еда). Ввод НЕ
+    /// блокируется, но idle/прослушка не перезаписывают их клип на середине —
+    /// иначе анимация шприца обрывалась покачиванием через 2-5 секунд.
+    private var reactingBacteria = Set<ObjectIdentifier>()
+    private func isReacting(_ view: BacteriaView) -> Bool {
+        reactingBacteria.contains(ObjectIdentifier(view))
+    }
+    /// Свободна для фоновых клипов (idle/listen): не занята и не реагирует.
+    private func isFreeForIdle(_ view: BacteriaView) -> Bool {
+        !isBacteriaBusy(view) && !isReacting(view)
+    }
     private func isBacteriaBusy(_ view: BacteriaView) -> Bool {
         busyBacteria.contains(ObjectIdentifier(view))
     }
@@ -110,6 +125,7 @@ final class GameViewController: UIViewController {
         configureRecorder()
         applyLayout()
         startIdle()
+        buildMicIndicator()
         // повтор голоса всегда активен: слушаем микро постоянно
         startAlwaysListening()
     }
@@ -150,6 +166,7 @@ final class GameViewController: UIViewController {
         needleView.isHidden = true
         draggedBacteria = nil
         busyBacteria.removeAll()
+        reactingBacteria.removeAll()
         talker = nil
         // stopAndReset сбрасывает клипы и выбрасывает их completion-замыкания,
         // а именно в них декрементятся eatingCount/pendingChildren. Без сброса
@@ -175,7 +192,7 @@ final class GameViewController: UIViewController {
         // после фона клипы бактерий остановлены (stopAndReset в pause) —
         // возвращаем всем свободным покачивание, иначе колония стоит кадром
         startIdle()
-        for view in bacteriaViews where !isBacteriaBusy(view) {
+        for view in bacteriaViews where isFreeForIdle(view) {
             resumeIdle(for: view)
         }
         startAlwaysListening()
@@ -601,6 +618,7 @@ final class GameViewController: UIViewController {
         target.stopAndReset()
         target.removeFromSuperview()
         busyBacteria.remove(ObjectIdentifier(target))
+        reactingBacteria.remove(ObjectIdentifier(target))
         if let index = bacteriaViews.firstIndex(where: { $0 === target }) {
             bacteriaViews.remove(at: index)
             if index < bacteriaVelocities.count { bacteriaVelocities.remove(at: index) }
@@ -634,6 +652,7 @@ final class GameViewController: UIViewController {
         let view = target ?? bacteriaViews.randomElement()
         guard let view, !isBacteriaBusy(view) else { return }
         if exclusive { busyBacteria.insert(ObjectIdentifier(view)) }
+        reactingBacteria.insert(ObjectIdentifier(view))
 
         let picker = soundPicker(for: reaction)
         let effect = reaction.sounds[picker.next()]
@@ -705,6 +724,7 @@ final class GameViewController: UIViewController {
             completion: { [weak self] in
                 guard let self else { return }
                 self.busyBacteria.remove(ObjectIdentifier(target))
+                self.reactingBacteria.remove(ObjectIdentifier(target))
                 self.stopVoice(for: target)
                 completion?()
                 // бактерия снова в покое, если не идёт запись и она ещё жива
@@ -748,7 +768,7 @@ final class GameViewController: UIViewController {
 
     /// Возвращает одну бактерию к покачиванию, не трогая остальных.
     private func resumeIdle(for view: BacteriaView) {
-        guard !isBacteriaBusy(view) else { return }
+        guard isFreeForIdle(view) else { return }
         if let base = ClipLibrary.shared.clip(ClipName.idleBase) {
             view.play(base, repeats: 0, fps: 8)
         }
@@ -1086,7 +1106,7 @@ final class GameViewController: UIViewController {
     private func startIdle() {
         
         if let base = ClipLibrary.shared.clip(ClipName.idleBase) {
-            for view in bacteriaViews where !isBacteriaBusy(view) {
+            for view in bacteriaViews where isFreeForIdle(view) {
                 view.play(base, repeats: 0, fps: 8)
             }
         }
@@ -1117,7 +1137,7 @@ final class GameViewController: UIViewController {
         let names = [ClipName.bumpUpDown, ClipName.bumpLeftRight,
                      ClipName.bumpUpDown, ClipName.lookLeftRight]
         guard let clip = ClipLibrary.shared.random(from: names),
-              let target = bacteriaViews.filter({ !isBacteriaBusy($0) }).randomElement() else { return }
+              let target = bacteriaViews.filter({ isFreeForIdle($0) }).randomElement() else { return }
         target.play(clip, repeats: 1, fps: 13, completion: { [weak self] in
             guard let self else { return }
             self.resumeIdle(for: target)
@@ -1153,6 +1173,31 @@ final class GameViewController: UIViewController {
 
 
 
+    /// Полоска уровня микрофона + состояние: сразу видно, слышит ли игра.
+    private func buildMicIndicator() {
+        micLevelBar.backgroundColor = UIColor(red: 0.3, green: 1, blue: 0.4, alpha: 0.9)
+        micLevelBar.layer.cornerRadius = 2
+        view.addSubview(micLevelBar)
+        micStateLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        micStateLabel.textColor = UIColor(white: 1, alpha: 0.85)
+        micStateLabel.text = "микро"
+        view.addSubview(micStateLabel)
+        micTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let level = CGFloat(self.recorder.level)
+            let width = min(max(level * 1200, 2), self.view.bounds.width - 24)
+            let y = self.view.bounds.height - max(self.view.safeAreaInsets.bottom, 8) - 14
+            self.micLevelBar.frame = CGRect(x: 12, y: y, width: width, height: 4)
+            self.micStateLabel.frame = CGRect(x: 12, y: y - 16, width: 200, height: 14)
+            switch self.recorder.state {
+            case .listening: self.micStateLabel.text = String(format: "слушаю %.3f", level)
+            case .speaking: self.micStateLabel.text = "говорю"
+            case .idle: self.micStateLabel.text = "пауза"
+            case .failed(let m): self.micStateLabel.text = "ошибка: \(m)"
+            }
+        }
+    }
+
     private func requestMicrophone(_ completion: @escaping (Bool) -> Void) {
         if #available(iOS 17.0, *) {
             AVAudioApplication.requestRecordPermission { granted in
@@ -1176,7 +1221,7 @@ final class GameViewController: UIViewController {
         case .listening:
             // слушает одна свободная бактерия; занятую (смех/еда/смерть) не
             // трогаем, иначе прослушка перезаписывала её анимацию каждые ~1.4 с
-            let listener = bacteriaViews.filter({ !isBacteriaBusy($0) }).randomElement()
+            let listener = bacteriaViews.filter({ isFreeForIdle($0) }).randomElement()
             talker = listener
             if let listener, let listen = ClipLibrary.shared.clip(ClipName.listen) {
                 listener.play(listen, repeats: 0, fps: 8)
