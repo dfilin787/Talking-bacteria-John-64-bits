@@ -169,7 +169,10 @@ final class VoiceRecorder {
         // пользователь говорил в пустоту и его никто не слушал.
         // Голос был — повторяем, даже если запись короткая (порог 0.12 с):
         // иначе бактерия «ждала разговора», получала его и молча уходила в idle.
-        guard let captured, let raw = captured.makeBuffer(), captured.duration >= 0.08 else {
+        // Голоса не было — ничего не повторяем (иначе по таймауту бактерия
+        // «говорила» тишину). Голос был — повторяем даже короткую фразу.
+        guard heardVoice, let captured, let raw = captured.makeBuffer(),
+              captured.duration >= 0.08 else {
             transition(to: .idle)
             return
         }
@@ -299,6 +302,11 @@ final class VoiceRecorder {
         guard let channel = buffer.floatChannelData?.pointee else { return buffer }
         let total = Int(buffer.frameLength)
         let window = max(1, Int(buffer.format.sampleRate * 0.02))
+        // Режем только явную тишину (порог в 4 раза ниже детекции речи) и
+        // оставляем 120 мс запаса перед первым звуком — иначе срезало начало
+        // фразы, как в голосовых с агрессивным VAD.
+        let cutGate = gate * 0.25
+        let padFrames = Int(buffer.format.sampleRate * 0.12)
         func rms(_ from: Int, _ to: Int) -> Float {
             var sum: Float = 0
             let n = max(1, to - from)
@@ -306,9 +314,11 @@ final class VoiceRecorder {
             return (sum / Float(n)).squareRoot()
         }
         var start = 0
-        while start + window <= total && rms(start, start + window) < gate { start += window }
+        while start + window <= total && rms(start, start + window) < cutGate { start += window }
+        start = max(0, start - padFrames)
         var end = total
-        while end - window >= start && rms(end - window, end) < gate { end -= window }
+        while end - window >= start && rms(end - window, end) < cutGate { end -= window }
+        end = min(total, end + padFrames / 2)
         let frames = end - start
         guard frames > window, frames < total,
               let copy = AVAudioPCMBuffer(pcmFormat: buffer.format,
