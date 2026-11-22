@@ -1,12 +1,4 @@
 #!/usr/bin/env python3
-"""Проверяет собранный IPA: архитектура, ассеты, наличие кода игры и SoundTouch.
-
-Короткие строковые литералы (до 15 байт UTF-8) Swift в Release-сборке инлайнит
-как immediates в машинный код, поэтому в __cstring их нет — это не потеря.
-Наличие кода проверяем по метаданным типов и манглингу модуля.
-
-Запуск:  python tools/inspect_ipa.py [путь к .ipa]
-"""
 
 import os
 import re
@@ -29,7 +21,6 @@ CLIPS = ["talk", "listen", "blink", "sway", "lookLeftRight", "bumpLeftRight",
          "bumpUpDown", "laugh", "laughGiggle", "laughGuffaw", "crazy1", "crazy2",
          "eatBrownDonut", "eatOrangeDonut", "eatPinkDonut", "explode", "multiply", "needle"]
 
-
 def cstring_section(data):
     magic = struct.unpack("<I", data[:4])[0]
     if magic != 0xFEEDFACF:
@@ -50,7 +41,6 @@ def cstring_section(data):
                 sect_offset += 80
         offset += size
     return b""
-
 
 def main():
     path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "out", "TalkingJohn-unsigned.ipa")
@@ -120,7 +110,6 @@ def main():
         return 1
     print("IPA в порядке: arm64-код игры, SoundTouch и все ассеты на месте.")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

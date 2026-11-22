@@ -1,12 +1,6 @@
 import AVFoundation
 import UIKit
 
-/// Воспроизведение пайплайна оригинала: `startAudioRecording` писал вход в AudioQueue,
-/// `AQSoundPlayer` прогонял запись через SoundTouch, а `playTalkAnimation`
-/// синхронизировал воспроизведение с клипом `talk`.
-///
-/// Здесь то же самое на AVAudioEngine: тап с микрофона копится в буфер, по завершении
-/// весь буфер проходит через SoundTouch и уходит в player node.
 final class VoiceRecorder {
 
     enum State: Equatable {
@@ -26,11 +20,11 @@ final class VoiceRecorder {
 
     struct Settings {
         var maxDuration: TimeInterval = 10
-        /// Порог RMS, ниже которого считается тишиной.
+
         var noiseGate: Float = 0.030
-        /// Сколько секунд тишины подряд завершают запись (после того как голос был).
+
         var silenceTimeout: TimeInterval = 1.0
-        /// Насколько поднять голос, в полутонах.
+
         var pitchSemitones: Double = 9
         var volume: Float = 1.0
     }
@@ -39,14 +33,12 @@ final class VoiceRecorder {
     private let playerNode = AVAudioPlayerNode()
 
     private var collector: SampleCollector?
-    /// Коллектор текущего tap'а (создаётся на аудио-потоке по формату буфера).
+
     private var tapCollector: SampleCollector?
     private let processingQueue = DispatchQueue(label: "john.voice.process", qos: .userInitiated)
-    /// Сериализует обращения к графу движка: recorder и эффекты делят один AVAudioEngine.
+
     private let graphQueue: DispatchQueue
 
-    /// isCapturing пишется на главном потоке и читается на аудио-потоке —
-    /// защищаем локом, иначе формальная гонка на Bool.
     private let captureLock = NSLock()
     private var _isCapturing = false
     private var isCapturing: Bool {
@@ -56,8 +48,7 @@ final class VoiceRecorder {
     private var captureStartedAt = Date()
     private var lastVoiceAt = Date()
     private var silenceStopScheduled = false
-    /// Был ли хоть какой-то голос за время прослушки — авто-стоп только после него.
-    /// Пишется на аудио-потоке, читается на main — под captureLock.
+
     private var _heardVoice = false
     private var heardVoice: Bool {
         get { captureLock.lock(); defer { captureLock.unlock() }; return _heardVoice }
@@ -67,19 +58,14 @@ final class VoiceRecorder {
     var settings = Settings()
     private(set) var state: State = .idle
     var onStateChanged: ((State) -> Void)?
-    /// RMS входного сигнала — для индикатора записи.
+
     private(set) var level: Float = 0
 
-    /// - Parameters:
-    ///   - engine: общий движок приложения (тот же, что играет эффекты).
-    ///   - graphQueue: очередь, на которой разрешено трогать граф этого движка.
     init(engine: AVAudioEngine, graphQueue: DispatchQueue, format: AVAudioFormat) {
         self.engine = engine
         self.graphQueue = graphQueue
         engine.attach(playerNode)
-        // nil-формат: узел согласуется с микшером, частоту которого задаёт вход
-        // микрофона (48к). Жёсткие 44.1к не совпадали с буфером записи (48к),
-        // и scheduleBuffer молчал — бактерия не говорила.
+
         engine.connect(playerNode, to: engine.mainMixerNode, format: nil)
     }
 
@@ -89,14 +75,9 @@ final class VoiceRecorder {
         if engine.isRunning { engine.stop() }
     }
 
-    // MARK: - Запись
-
-    /// Начинает слушать микрофон. Аудиосессию должен подготовить владелец
-    /// (категория playAndRecord) — здесь только работа с графом движка.
     func beginListening() {
         guard !isCapturing else { return }
 
-        // Состояние меняется только на главном потоке; аудиопоток лишь читает isCapturing.
         isCapturing = true
         silenceStopScheduled = false
         heardVoice = false
@@ -108,9 +89,7 @@ final class VoiceRecorder {
 
         graphQueue.async { [weak self] in
             guard let self else { return }
-            // Движок уже запущен для эффектов БЕЗ входа. Первое обращение к
-            // inputNode добавляет входной узел в живой граф, и tap не получает
-            // данные. Правильный порядок: stop -> вход/формат -> tap -> start.
+
             if self.engine.isRunning { self.engine.stop() }
             let input = self.engine.inputNode
             input.removeTap(onBus: 0)
@@ -132,11 +111,7 @@ final class VoiceRecorder {
             }
             input.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buffer, _ in
                 guard let self else { return }
-                // Коллектор создаётся РОВНО ОДИН раз за прослушку: проверяем
-                // tapCollector (поле аудио-потока), а не collector — тот
-                // присваивается на main и здесь всегда был nil, из-за чего
-                // коллектор пересоздавался на каждом буфере и запись состояла
-                // из последних 20 мс (повтор не проходил порог 0.25 с).
+
                 if self.tapCollector == nil {
                     self.tapCollector = SampleCollector(sampleRate: buffer.format.sampleRate)
                 }
@@ -144,7 +119,7 @@ final class VoiceRecorder {
                     self.consume(buffer, into: target)
                 }
             }
-            // Запускаем граф ПОСЛЕ установки tap — иначе вход не качает данные.
+
             self.engine.prepare()
             do { try self.engine.start() } catch {
                 DispatchQueue.main.async {
@@ -164,13 +139,6 @@ final class VoiceRecorder {
         let captured = tapCollector ?? collector
         tearDownCapture()
 
-        // Повторяем только если реально был голос. Иначе рекордер «говорил»
-        // 10 секунд тишины (maxDuration), микрофон в это время выключен —
-        // пользователь говорил в пустоту и его никто не слушал.
-        // Голос был — повторяем, даже если запись короткая (порог 0.12 с):
-        // иначе бактерия «ждала разговора», получала его и молча уходила в idle.
-        // Голоса не было — ничего не повторяем (иначе по таймауту бактерия
-        // «говорила» тишину). Голос был — повторяем даже короткую фразу.
         guard heardVoice, let captured, let raw = captured.makeBuffer(),
               captured.duration >= 0.08 else {
             transition(to: .idle)
@@ -182,10 +150,9 @@ final class VoiceRecorder {
 
         processingQueue.async { [weak self] in
             guard let self else { return }
-            // Обрезаем тихие края: иначе SoundTouch растягивает «воздух»
-            // и бактерия тянет звук вместо короткого повтора.
+
             let trimmed = Self.trimSilence(raw, gate: self.settings.noiseGate) ?? raw
-            // Если SoundTouch не отдал сэмплы — играем оригинал, а не молчим.
+
             let shifted = Self.applyPitch(to: trimmed, semitones: pitch) ?? trimmed
             DispatchQueue.main.async {
                 self.play(shifted, volume: volume)
@@ -214,17 +181,13 @@ final class VoiceRecorder {
         transition(to: .idle)
     }
 
-    // MARK: - Внутреннее
-
     private func tearDownCapture() {
         guard isCapturing else { return }
         isCapturing = false
-        // Снимаем только tap. Движок НЕ останавливаем: stop() глушит input-узел
-        // и сбрасывает его формат, из-за чего следующая прослушка «не слышит».
+
         engine.inputNode.removeTap(onBus: 0)
     }
 
-    /// Вызывается на аудиопотоке. Только копирование сэмплов и арифметика.
     private func consume(_ buffer: AVAudioPCMBuffer, into collector: SampleCollector) {
         guard isCapturing else { return }
         let mono = buffer.mono() ?? buffer
@@ -237,7 +200,7 @@ final class VoiceRecorder {
             for i in 0..<count { sum += channel[i] * channel[i] }
             rms = (sum / Float(count)).squareRoot()
         } else if count > 0, let channel = mono.int16ChannelData?.pointee {
-            // int16-вход: без этой ветки RMS всегда 0 и голос не детектился
+
             var sum: Float = 0
             let scale: Float = 1.0 / 32768.0
             for i in 0..<count {
@@ -251,9 +214,7 @@ final class VoiceRecorder {
         let voiced = rms > settings.noiseGate
         if voiced { lastVoiceAt = Date(); heardVoice = true }
         let silence = Date().timeIntervalSince(lastVoiceAt)
-        // Говоришь — слушает; замолчал на ~1 с — повторяет и заканчивает.
-        // Если голоса не было вовсе, окно ожидания короткое (3 с), чтобы поза
-        // слушания не висела вечно на фоновом шуме.
+
         let idleWindow: TimeInterval = 3.0
         let shouldStop = (heardVoice && silence >= settings.silenceTimeout)
             || (!heardVoice && elapsed >= idleWindow)
@@ -281,7 +242,7 @@ final class VoiceRecorder {
             }
             self.playerNode.stop()
             self.playerNode.volume = volume
-            // Буфер записи — в формате микшера, иначе воспроизведение молчит.
+
             let mixerFormat = self.engine.mainMixerNode.outputFormat(forBus: 0)
             let prepared = (mixerFormat.sampleRate > 0
                 ? SoundBank.convert(buffer, to: mixerFormat) : nil) ?? buffer
@@ -296,15 +257,11 @@ final class VoiceRecorder {
         }
     }
 
-    /// Обрезает тихие начало/конец записи (по RMS-окнам 20 мс), чтобы
-    /// SoundTouch не растягивал фоновый воздух в протяжный звук.
     private static func trimSilence(_ buffer: AVAudioPCMBuffer, gate: Float) -> AVAudioPCMBuffer? {
         guard let channel = buffer.floatChannelData?.pointee else { return buffer }
         let total = Int(buffer.frameLength)
         let window = max(1, Int(buffer.format.sampleRate * 0.02))
-        // Режем только явную тишину (порог в 4 раза ниже детекции речи) и
-        // оставляем 120 мс запаса перед первым звуком — иначе срезало начало
-        // фразы, как в голосовых с агрессивным VAD.
+
         let cutGate = gate * 0.25
         let padFrames = Int(buffer.format.sampleRate * 0.12)
         func rms(_ from: Int, _ to: Int) -> Float {
@@ -330,7 +287,6 @@ final class VoiceRecorder {
         return copy
     }
 
-    /// SoundTouch: подъём тона без изменения длительности.
     private static func applyPitch(to source: AVAudioPCMBuffer, semitones: Double) -> AVAudioPCMBuffer? {
         let format = source.format
         guard let samples = source.floatChannelData?.pointee, source.frameLength > 0,
@@ -362,9 +318,6 @@ final class VoiceRecorder {
     }
 }
 
-// MARK: - Копилка сэмплов
-
-/// Копит моно-float подряд. Дешевле и предсказуемее, чем склейка AVAudioPCMBuffer.
 final class SampleCollector {
     private var samples: [Float] = []
     private let sampleRate: Double
@@ -381,8 +334,7 @@ final class SampleCollector {
         let room = limit - samples.count
         let count = min(Int(buffer.frameLength), room)
         guard count > 0 else { return }
-        // Микрофон часто отдаёт int16, а не float: floatChannelData тогда nil,
-        // и сэмплы не копились вообще — повтор был пустым. Читаем оба формата.
+
         if let channel = buffer.floatChannelData?.pointee {
             samples.append(contentsOf: UnsafeBufferPointer(start: channel, count: count))
         } else if let channel = buffer.int16ChannelData?.pointee {
@@ -410,7 +362,7 @@ final class SampleCollector {
 }
 
 extension AVAudioPCMBuffer {
-    /// Сводит многоканальный буфер в моно. Моно отдаёт как есть.
+
     func mono() -> AVAudioPCMBuffer? {
         guard format.channelCount > 1 else { return self }
         guard let monoFormat = AVAudioFormat(standardFormatWithSampleRate: format.sampleRate, channels: 1),

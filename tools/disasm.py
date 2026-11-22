@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Дизассемблирует armv7-слайс оригинала и показывает тело метода.
-
-Нужен capstone:  python -m pip install capstone
-Запуск:  python tools/disasm.py "путь к .ipa" "touchBacteriaDonut"
-"""
 
 import re
 import struct
@@ -13,7 +8,6 @@ import zipfile
 from capstone import Cs, CS_ARCH_ARM, CS_MODE_THUMB, CS_MODE_ARM
 
 APP = "Payload/TalkingJohn.app/"
-
 
 class MachO:
     def __init__(self, data):
@@ -33,7 +27,7 @@ class MachO:
         symoff = nsyms = stroff = 0
         for _ in range(ncmds):
             cmd, cmdsize = struct.unpack("<II", data[offset:offset + 8])
-            if cmd == 0x01:  # LC_SEGMENT
+            if cmd == 0x01:
                 segname = data[offset + 8:offset + 24].split(b"\0")[0].decode()
                 vmaddr, vmsize, fileoff, filesize = struct.unpack("<IIII", data[offset + 24:offset + 40])
                 nsects = struct.unpack("<I", data[offset + 48:offset + 52])[0]
@@ -47,7 +41,7 @@ class MachO:
                     reserved1, reserved2 = struct.unpack("<II", data[sect_offset + 56:sect_offset + 64])
                     self.sections.append((seg, sectname, addr, size, soff, reserved1, reserved2))
                     sect_offset += 68
-            elif cmd == 0x02:  # LC_SYMTAB
+            elif cmd == 0x02:
                 symoff, nsyms, stroff, strsize = struct.unpack("<IIII", data[offset + 8:offset + 24])
             offset += cmdsize
 
@@ -72,7 +66,6 @@ class MachO:
         return None
 
     def import_stubs(self):
-        """Карта: адрес стаба -> имя импортируемой функции (objc_msgSend и др.)."""
         symoff = nsyms = stroff = indirect = 0
         data = self.data
         ncmds = struct.unpack("<I", data[16:20])[0]
@@ -91,7 +84,6 @@ class MachO:
             strx = struct.unpack("<I", data[base:base + 4])[0]
             return data[stroff + strx:data.find(b"\0", stroff + strx)].decode(errors="replace")
 
-        # Сначала карта адресов слотов __la_symbol_ptr -> имя импорта.
         la_names = {}
         for seg, sect, addr, size, soff, r1, _ in self.sections:
             if sect != "__la_symbol_ptr":
@@ -102,15 +94,12 @@ class MachO:
                 if idx < nsyms:
                     la_names[addr + i] = symname(idx)
 
-        # Стаб: ldr ip,[pc,#disp]; ldr pc,[ip] — литерал хранит адрес la-слота.
         stubs = {}
         for seg, sect, addr, size, soff, r1, _ in self.sections:
             if not sect.startswith("__symbol_stub"):
                 continue
             step = 12 if sect == "__symbol_stub4" else 16
             for i in range(0, size, step):
-                # ldr ip, [pc, #disp] — литерал лежит в конце стаба и хранит
-                # прямой адрес слота __la_symbol_ptr.
                 literal = soff + i + step - 4
                 if literal + 4 > len(data):
                     continue
@@ -120,7 +109,6 @@ class MachO:
         return stubs
 
     def selector_refs(self):
-        """Карта: адрес слота в __objc_selrefs -> имя селектора."""
         refs = {}
         for seg, sect, addr, size, soff, _r1, _r2 in self.sections:
             if sect != "__objc_selrefs":
@@ -149,14 +137,11 @@ class MachO:
             return text
         return None
 
-
 def find_method(macho, name):
-    # method_t хранит голое имя селектора, а не "-[Class selector]".
     needle = name.encode() + b"\0"
     pos = macho.data.find(needle)
     if pos < 0:
         return None
-    # Ищем method_t: три uint32 (name, types, imp), где name указывает на эту строку.
     name_vm = macho.off_to_vm(pos)
     if name_vm is None:
         return None
@@ -173,7 +158,6 @@ def find_method(macho, name):
         return imp_ptr
     return None
 
-
 def disassemble(macho, imp, limit=400, selrefs=None, stubs=None):
     off = macho.vm_to_off(imp & ~1)
     if off is None:
@@ -187,7 +171,6 @@ def disassemble(macho, imp, limit=400, selrefs=None, stubs=None):
     last_selector = None
     for insn in md.disasm(code, imp & ~1):
         line = "  0x%08x  %-8s %s" % (insn.address, insn.mnemonic, insn.op_str)
-        # Разрешаем pc-relative загрузки строк
         if insn.mnemonic in ("ldr", "ldrb") and "pc" in insn.op_str:
             m = re.search(r"\[pc, #(0x[0-9a-f]+|\d+)\]", insn.op_str)
             if m:
@@ -225,14 +208,12 @@ def disassemble(macho, imp, limit=400, selrefs=None, stubs=None):
         if insn.mnemonic == "bx" and insn.op_str == "lr":
             break
 
-
 def main():
     if len(sys.argv) < 3:
         print(__doc__)
         return 1
     archive = zipfile.ZipFile(sys.argv[1])
     fat = archive.read(APP + "TalkingJohn")
-    # fat: берём первый armv7-слайс
     count = struct.unpack(">I", fat[8:12])[0]
     cpu, sub, off, size, align = struct.unpack(">iiIII", fat[8:28])
     data = fat[off:off + size]
@@ -250,7 +231,6 @@ def main():
             continue
         disassemble(macho, imp, selrefs=selrefs, stubs=stubs)
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

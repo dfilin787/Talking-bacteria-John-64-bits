@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Скачивает артефакты последней успешной сборки и проверяет IPA.
-
-Токен берётся из git credential helper, никуда не сохраняется.
-Запуск:  python tools/ci_download.py [--out каталог]
-"""
 
 import io
 import json
@@ -20,7 +15,6 @@ import zipfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API = "https://api.github.com"
 
-
 def remote_slug():
     url = subprocess.run(["git", "remote", "get-url", "origin"],
                          cwd=ROOT, capture_output=True, text=True).stdout.strip()
@@ -28,7 +22,6 @@ def remote_slug():
     if not match:
         raise SystemExit("Не удалось разобрать origin")
     return match.group(1), match.group(2)
-
 
 def token():
     result = subprocess.run(["git", "credential", "fill"], cwd=ROOT,
@@ -39,11 +32,9 @@ def token():
             return line[len("password="):]
     raise SystemExit("Нет сохранённых credentials")
 
-
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
-
 
 def fetch(path, auth, raw=False):
     request = urllib.request.Request(API + path)
@@ -65,9 +56,7 @@ def fetch(path, auth, raw=False):
         raise
     return data if raw else json.loads(data)
 
-
 CPU_NAMES = {12: "armv7/armv7s (32-бит)", 0x0100000C: "arm64", 7: "i386", 0x01000007: "x86_64"}
-
 
 def describe_macho(data):
     magic = data[:4]
@@ -83,7 +72,6 @@ def describe_macho(data):
         name = CPU_NAMES.get(cpu, "cputype %d" % cpu)
         return "thin: " + name, [name]
     return "не Mach-O (magic %s)" % magic.hex(), []
-
 
 def main():
     owner, repo = remote_slug()
@@ -165,7 +153,6 @@ def main():
         return 1
     print("IPA проверен: arm64, ассеты на месте.")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

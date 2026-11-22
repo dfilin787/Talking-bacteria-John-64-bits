@@ -18,16 +18,14 @@
         _pitchSemitones = 9.0;
         _tempo = 1.0;
 
-        // Библиотека собрана с ST_NO_EXCEPTION_HANDLING, поэтому ошибок-исключений
-        // не будет: некорректные параметры отсекаем сами.
         if (_sampleRate > 192000.0 || _channels > 16) { return nil; }
 
         _engine.setSampleRate((uint)_sampleRate);
         _engine.setChannels((uint)_channels);
-        // Настройки, близкие к оригиналу: качественный поиск, антиалиасинг включён.
+
         _engine.setSetting(SETTING_USE_QUICKSEEK, 0);
         _engine.setSetting(SETTING_USE_AA_FILTER, 1);
-        _engine.setSetting(SETTING_AA_FILTER_LENGTH, 64);   // кратно 8 — требование FIRFilter
+        _engine.setSetting(SETTING_AA_FILTER_LENGTH, 64);
         _engine.setPitchSemiTones(_pitchSemitones);
         _engine.setTempo(_tempo);
         _ready = YES;
@@ -56,7 +54,7 @@
     _engine.setTempo(_tempo);
 
     _engine.putSamples(samples, (uint)frameCount);
-    // flush выталкивает хвост из TDStretch — без него теряется конец фразы.
+
     _engine.flush();
 
     const NSUInteger chunkFrames = 4096;

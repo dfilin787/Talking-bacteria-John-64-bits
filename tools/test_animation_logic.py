@@ -1,18 +1,8 @@
 #!/usr/bin/env python3
-"""Проверяет логику покадрового движка из BacteriaView на модели.
-
-Повторяет алгоритм step() один в один и прогоняет сценарии: одиночный клип,
-зацикливание под звук, ожидание звука, старт звука на заданном кадре.
-Ловит двойной учёт проходов и преждевременное завершение.
-
-Запуск:  python tools/test_animation_logic.py
-"""
 
 import sys
 
-
 class Player:
-    """Точная модель BacteriaView.step(): один вызов tick == advance кадров."""
 
     def __init__(self, frame_count, repeats, sync_gate=None, frame_sound=None):
         self.frame_count = frame_count
@@ -29,7 +19,6 @@ class Player:
             frame_sound(0)
 
     def tick(self, advance=1):
-        """advance — сколько кадров прошлось за тик (в Swift это Int(accumulated/frameDuration))."""
         if not self.playing:
             return
         if self.holding:
@@ -56,7 +45,6 @@ class Player:
                         self.frame_index = self.frame_count - 1
                         finished = True
                         break
-                    # Звук ещё идёт: держим последний кадр, проход уже посчитан.
                     self.holding = True
                     self.frame_index = self.frame_count - 1
                     return
@@ -79,9 +67,7 @@ class Player:
             self.playing = False
             self.finished = True
 
-
 failures = []
-
 
 def check(name, condition, detail=""):
     if condition:
@@ -89,7 +75,6 @@ def check(name, condition, detail=""):
     else:
         print("  FAIL %s %s" % (name, detail))
         failures.append(name)
-
 
 def test_single_pass():
     p = Player(frame_count=10, repeats=1)
@@ -103,7 +88,6 @@ def test_single_pass():
     check("одиночный проход: останов на последнем кадре", p.frame_index == 9,
           "кадр %d" % p.frame_index)
 
-
 def test_fixed_repeats():
     p = Player(frame_count=10, repeats=3)
     ticks = 0
@@ -114,9 +98,7 @@ def test_fixed_repeats():
     check("три прохода: 30 тиков", ticks == 30, "получено %d" % ticks)
     check("три прохода завершены", p.finished)
 
-
 def test_sound_longer_than_clip():
-    # laugh.wav ≈ 47 кадров при клипе laugh в 33 кадра => 2 прохода.
     state = {"left": 47}
     p = Player(frame_count=33, repeats=0, sync_gate=lambda: state["left"] <= 0)
     ticks = 0
@@ -128,9 +110,7 @@ def test_sound_longer_than_clip():
     check("звук 47 / клип 33 => 2 прохода", p.passes == 2, "получено %d" % p.passes)
     check("анимация не оборвалась раньше звука", ticks >= 47, "тиков %d" % ticks)
 
-
 def test_sound_shorter_than_clip():
-    # eat2.wav ≈ 52 кадра при клипе 41 => 2 прохода; короткий звук — 1 проход.
     state = {"left": 5}
     p = Player(frame_count=41, repeats=0, sync_gate=lambda: state["left"] <= 0)
     ticks = 0
@@ -141,7 +121,6 @@ def test_sound_shorter_than_clip():
     check("короткий звук: клип доигрывает проход целиком", p.passes == 1,
           "получено %d" % p.passes)
     check("короткий звук: завершено", p.finished)
-
 
 def test_frame_sound_fires_each_pass():
     hits = []
@@ -156,9 +135,7 @@ def test_frame_sound_fires_each_pass():
           "срабатываний %d" % len(hits))
     check("три прохода по syncGate", p.passes == 3, "получено %d" % p.passes)
 
-
 def test_hold_does_not_double_count():
-    # Долгий звук: удержание последнего кадра не должно множить проходы.
     state = {"left": 200}
     p = Player(frame_count=10, repeats=0, sync_gate=lambda: state["left"] <= 0)
     ticks = 0
@@ -169,9 +146,7 @@ def test_hold_does_not_double_count():
     check("удержание кадра не удваивает проходы", p.passes == 20,
           "ожидалось 20, получено %d" % p.passes)
 
-
 def test_burst_advance():
-    # Пропущенные кадры (advance > 1) не должны ломать счёт проходов.
     p = Player(frame_count=10, repeats=2)
     ticks = 0
     while p.playing and ticks < 1000:
@@ -180,7 +155,6 @@ def test_burst_advance():
     check("рывок в 3 кадра: проходы посчитаны верно", p.passes == 2,
           "получено %d" % p.passes)
     check("рывок: завершено", p.finished)
-
 
 def main():
     print("Модель покадрового движка BacteriaView:")
@@ -196,7 +170,6 @@ def main():
         return 1
     print("\nВсе сценарии прошли.")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

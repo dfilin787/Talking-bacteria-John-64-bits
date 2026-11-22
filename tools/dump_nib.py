@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-"""Разбирает NIB оригинала: точная раскладка кнопок, размеры, видимость, картинки.
-
-NIB 2011 года — NSKeyedArchiver (binary plist) с ключами UI*, а не NS*.
-Разворачиваем UID-ссылки и восстанавливаем дерево UIView.
-
-Запуск:  python tools/dump_nib.py "путь к .ipa" [имя nib]
-"""
 
 import plistlib
 import re
@@ -15,7 +8,6 @@ import zipfile
 APP = "Payload/TalkingJohn.app/"
 RECT = re.compile(r"\{\{(-?[\d.]+), (-?[\d.]+)\}, \{([\d.]+), ([\d.]+)\}\}")
 POINT = re.compile(r"\{(-?[\d.]+), (-?[\d.]+)\}")
-
 
 class Archive:
     def __init__(self, data):
@@ -54,7 +46,6 @@ class Archive:
         return []
 
     def button_images(self, obj):
-        """UIButtonStatefulContent: словарь состояние -> контент."""
         found = []
         container = self.resolve(obj.get("UIButtonStatefulContent"))
         if not isinstance(container, dict):
@@ -71,7 +62,6 @@ class Archive:
                     found.append(inner)
         return found
 
-
 def geometry(obj, archive):
     bounds = archive.resolve(obj.get("UIBounds"))
     center = archive.resolve(obj.get("UICenter"))
@@ -86,7 +76,6 @@ def geometry(obj, archive):
             cx, cy = map(float, mc.groups())
             return cx - w / 2, cy - h / 2, w, h
     return None
-
 
 def walk(archive, obj, depth, out, seen):
     if not isinstance(obj, dict) or id(obj) in seen:
@@ -125,7 +114,6 @@ def walk(archive, obj, depth, out, seen):
     for child in archive.list_of(obj, "UISubviews"):
         walk(archive, child, depth + 1, out, seen)
 
-
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -143,7 +131,6 @@ def main():
         archive = Archive(archive_zip.read(nib))
         out = []
         seen = set()
-        # Корень: первый UIView с UIBounds во всём графе.
         for obj in archive.objects:
             if isinstance(obj, dict) and "UISubviews" in obj and "UIBounds" in obj:
                 walk(archive, obj, 0, out, seen)
@@ -151,7 +138,6 @@ def main():
         print("\n".join(out) if out else "  дерево не найдено")
         print()
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

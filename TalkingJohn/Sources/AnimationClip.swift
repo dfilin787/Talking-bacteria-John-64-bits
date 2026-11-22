@@ -1,7 +1,5 @@
 import UIKit
 
-/// Покадровый клип, извлечённый из оригинального бандла.
-/// Кадры лежат в папке-референсе `Animations/<name>/0000.png…`.
 struct AnimationClip {
     let name: String
     let frames: [UIImage]
@@ -10,7 +8,6 @@ struct AnimationClip {
     var frameCount: Int { frames.count }
     var isEmpty: Bool { frames.isEmpty }
 
-    /// Загружает клип. Возвращает nil, если папки нет или кадры не читаются.
     static func load(_ name: String) -> AnimationClip? {
         guard let dir = BundleLocator.directory("Animations/\(name)") else {
             assertionFailure("Нет папки клипа: Animations/\(name)")
@@ -29,7 +26,7 @@ struct AnimationClip {
         var images: [UIImage] = []
         images.reserveCapacity(urls.count)
         for url in urls {
-            // Кадры мелкие (137×200), декодировать все сразу дешевле, чем на каждом тике.
+
             if let image = UIImage(contentsOfFile: url.path)?.predecoded() {
                 images.append(image)
             }
@@ -44,7 +41,7 @@ struct AnimationClip {
 }
 
 extension UIImage {
-    /// Принудительно растеризует картинку, чтобы CoreAnimation не декодировал PNG на главном потоке.
+
     func predecoded() -> UIImage {
         let format = UIGraphicsImageRendererFormat.default()
         format.scale = scale
@@ -57,10 +54,8 @@ extension UIImage {
     }
 }
 
-/// Все клипы персонажа. Соответствуют папкам из оригинала один в один.
 enum ClipName {
-    /// Настоящий покой — покачивание `sway` (21 кадр). `listen` и `blink`
-    /// в оригинале однокадровые: это поза прослушки и моргание, а не idle.
+
     static let idleBase = "sway"
     static let blink = "blink"
     static let sway = "sway"
@@ -83,7 +78,6 @@ enum ClipName {
     ] + laugh + crazy + eat
 }
 
-/// Хранилище загруженных клипов. Грузит один раз при старте.
 final class ClipLibrary {
     static let shared = ClipLibrary()
 

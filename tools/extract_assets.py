@@ -1,13 +1,4 @@
 #!/usr/bin/env python3
-"""Извлекает игровые ассеты из оригинального .ipa в структуру проекта.
-
-- 515 обычных PNG копируются как есть, кадры анимаций нормализуются в 0000.png…
-- 37 PNG в формате Apple CgBI (BGRA, premultiplied alpha, zlib без заголовка)
-  конвертируются обратно в стандартный RGBA PNG.
-- WAV копируются без изменений.
-
-Запуск:  python tools/extract_assets.py "путь к .ipa"
-"""
 
 import io
 import json
@@ -25,7 +16,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS = os.path.join(ROOT, "Assets")
 APP_PREFIX = "Payload/TalkingJohn.app/"
 
-# Что оригинал тащил для соцсетей/рекламы — в новой сборке не нужно.
 SKIP_NAMES = {
     "facebook.png", "youtube.png", "mail.png", "mail@2x.png",
     "gift.png", "gift@2x.png", "wealth-splash-new.png",
@@ -33,9 +23,7 @@ SKIP_NAMES = {
     "aboutBack.png", "close.png", "X.png", "X@2x.png",
 }
 
-
 def cgbi_to_png(data: bytes) -> Image.Image:
-    """Разворачивает Apple CgBI PNG в обычный RGBA."""
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValueError("not a PNG")
     pos = 8
@@ -56,7 +44,6 @@ def cgbi_to_png(data: bytes) -> Image.Image:
     if depth != 8 or ctype not in (2, 6):
         raise ValueError("unsupported CgBI: depth=%s ctype=%s" % (depth, ctype))
 
-    # CgBI хранит поток zlib без 2-байтового заголовка и без adler32.
     try:
         raw = zlib.decompress(bytes(idat), -15)
     except zlib.error:
@@ -100,7 +87,6 @@ def cgbi_to_png(data: bytes) -> Image.Image:
         out[_ * stride:(_ + 1) * stride] = line
         prev = line
 
-    # BGRA -> RGBA и снятие premultiplied alpha.
     rgba = bytearray(stride * height)
     for i in range(0, len(out), channels):
         b, g, r = out[i], out[i + 1], out[i + 2]
@@ -116,7 +102,6 @@ def cgbi_to_png(data: bytes) -> Image.Image:
 
     return Image.frombytes("RGBA", (width, height), bytes(rgba))
 
-
 def save_png(data: bytes, dest: str, report: dict):
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     if data[12:16] == b"CgBI":
@@ -130,7 +115,6 @@ def save_png(data: bytes, dest: str, report: dict):
         report["copied"] += 1
         with Image.open(io.BytesIO(data)) as im:
             report["sizes"].append((os.path.basename(dest), im.size))
-
 
 def main():
     if len(sys.argv) < 2:
@@ -164,7 +148,6 @@ def main():
                 fh.write(z.read(name))
             sounds.append(base)
         elif ext == ".jpg" and "/" not in rel and base not in SKIP_NAMES:
-            # Фоны оригинала — JPEG (Blood-3-iphone.jpg из nib).
             dest = os.path.join(ASSETS, "UI", base)
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             with open(dest, "wb") as fh:
@@ -200,7 +183,6 @@ def main():
     print("WAV: %d, UI-картинок: %d" % (len(sounds), len(ui)))
     print("Ассеты: %s" % ASSETS)
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

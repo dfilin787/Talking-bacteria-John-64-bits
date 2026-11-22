@@ -2,9 +2,6 @@ import AVFoundation
 import QuartzCore
 import UIKit
 
-/// Все звуковые эффекты персонажа. WAV из оригинала: моно, 11025 Гц, 16 бит.
-/// Загружаются в память один раз — суммарно меньше двух мегабайт.
-/// Все обращения идут с одной аудиочереди, поэтому кэш не защищён замком.
 final class SoundBank {
     static let shared = SoundBank()
 
@@ -24,7 +21,7 @@ final class SoundBank {
     }
 
     private var buffers: [String: AVAudioPCMBuffer] = [:]
-    /// Моно 44.1 кГц — формат, в котором работают все голоса движка.
+
     private let format: AVAudioFormat
 
     private init() {
@@ -34,7 +31,6 @@ final class SoundBank {
         format = mono
     }
 
-    /// Читает WAV из папки-референса `Sounds` и приводит к формату движка.
     func buffer(for effect: Effect) -> AVAudioPCMBuffer? {
         if let cached = buffers[effect.rawValue] { return cached }
         guard let url = BundleLocator.file(directory: "Sounds", name: effect.rawValue, extension: "wav"),
@@ -57,7 +53,6 @@ final class SoundBank {
         for effect in Effect.allCases { _ = buffer(for: effect) }
     }
 
-    /// Пересчитывает частоту дискретизации и число каналов через AVAudioConverter.
     static func convert(_ source: AVAudioPCMBuffer, to format: AVAudioFormat) -> AVAudioPCMBuffer? {
         if source.format.sampleRate == format.sampleRate,
            source.format.channelCount == format.channelCount {
@@ -84,7 +79,6 @@ final class SoundBank {
     }
 }
 
-/// Проигрыватель эффектов поверх общего AVAudioEngine.
 final class EffectPlayer {
     private let engine: AVAudioEngine
     private var players: [AVAudioPlayerNode] = []
@@ -99,18 +93,13 @@ final class EffectPlayer {
         for _ in 0..<voices {
             let node = AVAudioPlayerNode()
             engine.attach(node)
-            // nil-формат: движок сам согласует узел с микшером. Жёсткий формат
-            // 44.1к при входе микрофона 48к ронял граф (краш на первой кнопке).
+
             engine.connect(node, to: engine.mainMixerNode, format: nil)
             players.append(node)
             deadlines.append(0)
         }
     }
 
-    /// Проигрывает эффект и возвращает предсказанную длительность в секундах.
-    /// Вызывать только на аудиочереди владельца движка.
-    /// - Returns: длительность и индекс голоса, чтобы можно было обрезать
-    ///   именно этот звук при прерывании анимации (не глуша соседей).
     @discardableResult
     func play(_ buffer: AVAudioPCMBuffer, volume: Float = 1.0) -> (TimeInterval, Int) {
         guard !players.isEmpty else { return (0, -1) }
@@ -122,23 +111,20 @@ final class EffectPlayer {
         nextPlayer = (nextPlayer + 1) % players.count
         node.stop()
         node.volume = volume
-        // Формат узла = формат микшера, который задаёт вход микрофона (48 кГц).
-        // Буфер 44.1 кГц без конверсии ломает граф вместе с tap'ом прослушки.
+
         let mixerFormat = engine.mainMixerNode.outputFormat(forBus: 0)
         let prepared = (mixerFormat.sampleRate > 0
             ? SoundBank.convert(buffer, to: mixerFormat) : nil) ?? buffer
         let playedDuration = Double(prepared.frameLength) / prepared.format.sampleRate
         node.scheduleBuffer(prepared, at: nil, options: .interrupts, completionHandler: nil)
         node.play()
-        // AVAudioPlayerNode.isPlaying остаётся true и после окончания буфера,
-        // поэтому окончание считаем по времени, а не по флагу узла.
+
         deadlinesLock.lock()
         deadlines[index] = CACurrentMediaTime() + playedDuration
         deadlinesLock.unlock()
         return (playedDuration, index)
     }
 
-    /// Обрезает один голос (звук прерванной анимации), не трогая остальные.
     func stop(voice: Int) {
         guard players.indices.contains(voice) else { return }
         players[voice].stop()
@@ -147,7 +133,6 @@ final class EffectPlayer {
         deadlinesLock.unlock()
     }
 
-    /// Ещё звучит ли голос (для waitForSoundSync клипа).
     func isPlaying(voice: Int) -> Bool {
         guard deadlines.indices.contains(voice) else { return false }
         deadlinesLock.lock()
@@ -163,8 +148,6 @@ final class EffectPlayer {
         deadlinesLock.unlock()
     }
 
-    /// Тишина на всех голосах по расчётным дедлайнам. Пригодится для отладки;
-    /// синхронизация анимации в игре считается по длительности буфера напрямую.
     var isSilent: Bool {
         let now = CACurrentMediaTime()
         deadlinesLock.lock()

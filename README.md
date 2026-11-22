@@ -1,124 +1,110 @@
-# Talking John — 64-битная пересборка
+# Talking John — 64-bit revival
 
-Переписанная с нуля версия **Talking Bacteria John, John & John** (Outfit7, 2011, v1.0.2).
-Оригинал был собран под armv7/armv7s и на современной iOS не запускается. Здесь — тот же
-геймплей на Swift + UIKit, arm64, iOS 15+.
+Восстановленная версия **Talking Bacteria John, John & John** (Outfit7, v1.0.2).
+Оригинал был собран под armv7/armv7s и удалён из App Store, на современной iOS не запускается.
+Здесь тот же геймплей, написанный заново на Swift + UIKit: **arm64, iOS 15+**.
 
-Личный проект. Арт и звуки принадлежат Outfit7; в App Store не публикуется.
+Неофициальный фанатский порт для сохранения игры. Не связан с Outfit7 и не одобрен ими.
+Подробнее о правах — [NOTICE.md](NOTICE.md).
 
-## Что взято из оригинала
+## Геймплей
 
-Разобран бинарник `TalkingJohn` (armv7-слайс) и восстановлена модель анимации:
+- **Повтор голоса** — бактерии постоянно слушают микрофон и повторяют сказанное
+  питч-шифтом (+9 полутонов), как в оригинале. Говоришь — слушают, замолчал на секунду —
+  повторяют. Порог отсекает фоновый шум, тихие края фразы обрезаются.
+- **Пончик** — случайная свободная бактерия ест случайный пончик, затем делится (`multiply`).
+  Одновременно едят не больше двух, всего бактерий не больше шести — как в оригинале.
+- **Шприц** — укол, все свободные бактерии сходят с ума хором. Вариация одна на всех
+  за укол и чередуется: `crazy1` → `crazy2` → `crazy1`.
+- **Таблетка** — появляется в центре поля, её можно тащить и толкать пальцем.
+  Пролетает сквозь бактерий и убивает их, не одноразовая: исчезает только после
+  долгого бездействия.
+- **Толчок свайпом** — бактерия отлетает и, после нескольких толчков, смеётся.
+  Тап по бактерии — лопается пузырями (`explode`).
+- Бактерии сами ездят по полю, отталкиваются друг от друга, проходят под кнопками
+  и не заходят за мембрану.
+
+## Как это работает
+
+Оригинальный бинарник (armv7-слайс) разобран дизассемблером, модель поведения восстановлена
+по нему и по видео геймплея. Соответствие ключевых механизмов:
 
 | Оригинал | Здесь |
 |---|---|
 | `SoundAnimation`, `SoundsAnimation` | `Reaction` + `BacteriaView` |
-| `soundFrameStart`, `playSoundForFrame:` | параметр `soundFrameStart`, замыкание `frameSound` |
-| `waitForSoundSync`, `waitingForSoundSync` | `syncGate` — клип крутится, пока звучит привязанный звук |
-| `repeatCount`, `repeatCountCurrent` | `repeats` / `minRepeats` |
-| `PermutationGenerator`, `usePermutationForSounds` | `PermutationPicker`, `ReactionPool` |
+| `soundFrameStart`, `playSoundForFrame:` | `soundFrameStart`, замыкание `frameSound` |
+| `waitForSoundSync` | `syncGate` — клип крутится, пока звучит привязанный звук |
+| `repeatCount` | `repeats` / `minRepeats` |
+| `PermutationGenerator` | `PermutationPicker`, `ReactionPool` |
 | `BacteriaAnimView`, `AnimLayeredImage` | `BacteriaView` на `CADisplayLink` |
-| `SpeakHereController`, `AQSoundPlayer`, AudioQueue | `VoiceRecorder` на `AVAudioEngine` |
-| `soundtouch::SoundTouch`, `initWithPitch:bufferSize:` | та же библиотека 2.3.3, обёртка `SoundTouchProcessor` |
-| `touchHead`, `touchStomach`, `touchBacteriaDonut/Pill/Needle` | те же обработчики |
+| `SpeakHereController`, `AQSoundPlayer` (AudioQueue) | `VoiceRecorder` на `AVAudioEngine` |
+| `collision2D` | попарное отталкивание в моторе движения |
+| `maxAvailableBacterias` = 6 | лимит бактерий и счётчик одновременной еды |
 
-Ключевая находка: звуки длиннее клипов (`laugh.wav` — 47 кадров при клипе в 33,
-`eat1.wav` — 69 при 41), поэтому анимация **зацикливается под длительность звука**,
-а не проигрывается один раз. Это и есть `waitForSoundSync`.
+Звуки длиннее клипов (`laugh.wav` — 47 кадров при клипе в 33), поэтому анимация
+зацикливается под длительность звука — это и есть `waitForSoundSync`. Для еды звук
+обрезается по длине клипа, чтобы проход был ровно один.
 
-Питч-шифт делается оригинальной SoundTouch, а не `AVAudioUnitTimePitch`, — характерный
-«бурундучий» тембр сохраняется один в один.
+Питч-шифт делает **SoundTouch 2.3.3** — та же библиотека и версия, что в оригинале,
+поэтому характерный тембр сохранён один в один (не `AVAudioUnitTimePitch`).
 
-## Выброшено
-
-Facebook SDK 2011 года, `YouTubeUpload` (ClientLogin мёртв), реклама Mobclix,
-`AppsGridController` и `Outfit7News` (кросс-промо на мёртвые URL), `UIWebView` в about.
-Это примерно половина кодовой базы оригинала.
+Из оригинала не переносились: Facebook SDK 2011 года, загрузка на YouTube через мёртвый
+ClientLogin, реклама Mobclix, кросс-промо на неработающие URL, `UIWebView`-экран about.
 
 ## Структура
 
 ```
-Assets/
-  Animations/<клип>/0000.png…   504 кадра, 18 клипов
-  Sounds/*.wav                  16 WAV, моно 11025 Гц
-  UI/*.png                      кнопки, фон, иконки
-  manifest.json                 что извлечено
-TalkingJohn/
-  Sources/*.swift               вся логика
-  Support/                      ObjC++ обёртка SoundTouch + bridging header
-  Assets.xcassets               иконка приложения
-  Info.plist
-Vendor/SoundTouch/              исходники SoundTouch 2.3.3 (LGPL, см. LICENSE.TXT)
-tools/extract_assets.py         извлечение ассетов из .ipa
-tools/verify_project.py         ассеты, plist, SoundTouch, манифест
-tools/check_swift_refs.py       селекторы, поля, баланс скобок
-tools/test_animation_logic.py   модель покадрового движка, 17 сценариев
-tools/check_all.py              все проверки подряд
-project.yml                     конфигурация XcodeGen
+TalkingJohn/Sources/     игровой код (Swift)
+TalkingJohn/Support/     Objective-C++ обёртка SoundTouch
+Vendor/SoundTouch/       SoundTouch 2.3.3 (LGPL 2.1)
+Assets/Animations/       покадровые клипы персонажа
+Assets/Sounds/           звуковые эффекты
+Assets/UI/               кнопки, фон, иконки
+tools/                   проверки проекта и инструменты разбора IPA
+.github/workflows/       сборка IPA на macOS-раннере
 ```
 
-Проверки гоняются без Mac:
+## Сборка
+
+Локально нужен macOS с Xcode 15+ и [XcodeGen](https://github.com/yonaskolb/XcodeGen):
+
+```bash
+brew install xcodegen
+xcodegen generate
+xcodebuild -project TalkingJohn.xcodeproj -scheme TalkingJohn \
+  -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+  CODE_SIGNING_ALLOWED=NO build
+```
+
+Без Mac — сборка идёт в GitHub Actions (`.github/workflows/build.yml`): каждый push
+собирает arm64 IPA и выкладывает её в артефакты запуска. Подпись не выполняется,
+IPA ставится через AltStore / Sideloadly / TrollStore.
+
+Проверки без Xcode (работают на любой ОС, нужен Python 3):
 
 ```bash
 python tools/check_all.py
 ```
 
-Модель анимации в `test_animation_logic.py` повторяет `BacteriaView.step()` один в один
-и ловит рассинхрон звука с кадрами — именно так был найден и исправлен двойной учёт
-проходов при удержании последнего кадра.
+Прогоняет верификацию проекта, проверку внутренних ссылок Swift, поиск посторонних
+символов в тексте и юнит-тесты логики покадровой анимации.
 
-37 PNG в оригинале лежали в эппловском формате **CgBI** (BGRA, premultiplied alpha,
-zlib без заголовка). Экстрактор разворачивает их обратно в RGBA — иначе они выглядят
-как сине-красный мусор.
+## Установка
 
-## Сборка
+Готовую IPA из артефактов CI подписать своим сертификатом через
+[AltStore](https://altstore.io) или [Sideloadly](https://sideloadly.io), либо поставить
+на устройство с TrollStore. Приложение не публикуется в App Store.
 
-**Без Mac:** сборка уезжает в GitHub Actions — раннер `macos-15` с Xcode 16.4.
-Подробно в [BUILD-WITHOUT-MAC.md](BUILD-WITHOUT-MAC.md). Пайплайн лежит в
-`.github/workflows/build.yml`, артефактом приходит `TalkingJohn-unsigned.ipa`,
-который ставится через Sideloadly / AltStore / TrollStore.
+## Лицензии
 
-**С Mac:** Xcode 15+ и [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+- **Код этого проекта** — MIT, см. [LICENSE](LICENSE).
+- **SoundTouch 2.3.3** (`Vendor/SoundTouch/`) — LGPL 2.1, © Olli Parviainen.
+  Полный текст: `Vendor/SoundTouch/LICENSE.TXT`.
+- **Арт, анимации, звуки, персонаж и название** — принадлежат Outfit7 Limited
+  и в репозитории распространяются только в целях сохранения игры.
+  MIT на них **не распространяется**. См. [NOTICE.md](NOTICE.md).
 
-```bash
-brew install xcodegen
-cd TalkingJohn
-xcodegen generate
-open TalkingJohn.xcodeproj
-```
+## Авторы
 
-Дальше в Xcode: выбрать свою команду подписи (Signing & Capabilities → Team),
-подключить iPhone, Cmd+R. Bundle ID `com.pokoyo.talkingjohn` при необходимости поменяй.
-
-Ассеты уже извлечены. Если нужно повторить с другого `.ipa`:
-
-```bash
-python tools/extract_assets.py "/путь/к/Talking Bacteria John, John & John 1.0.2.ipa"
-python tools/verify_project.py
-```
-
-## Управление
-
-- **Тап по голове** — смех (`laugh`, `laughGiggle`, `laughGuffaw`)
-- **Тап по животу** — щекотка (`crazy1`, `crazy2`)
-- **Пончик / второй пончик** — еда (`eatPinkDonut`, `eatOrangeDonut`)
-- **Таблетка** — деление (`multiply`)
-- **Шприц** — полноэкранная сцена `needle`, затем взрыв (`explode`)
-- **Кнопка записи** — слушает микрофон, поднимает голос на 9 полутонов и повторяет
-  синхронно с клипом `talk`. Запись обрывается по 1.1 с тишины или через 8 с.
-
-В покое персонаж моргает, покачивается, оглядывается и подпрыгивает — случайные
-паузы 2.6–5.4 с, как в оригинале.
-
-## Настройки под себя
-
-`VoiceRecorder.Settings` — высота голоса (`pitchSemitones`), порог тишины
-(`noiseGate`), таймаут (`silenceTimeout`), максимальная длина фразы (`maxDuration`).
-
-`Reactions` — какой клип с какими звуками, fps и кадр старта звука.
-
-## Права
-
-Код проекта — твой. SoundTouch распространяется по LGPL 2.1 (`Vendor/SoundTouch/LICENSE.TXT`),
-линкуется статически; для личного использования обязательств нет.
-Арт, анимации и звуки — собственность Outfit7.
+Игровой код, разбор оригинала и сборка — [@dfilin787](https://github.com/dfilin787)
+совместно с Claude (Anthropic) в качестве ИИ-ассистента.

@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-"""Показывает статус сборки GitHub Actions для этого репозитория.
-
-Токен берётся из git credential helper (того же, что использует git push),
-никуда не сохраняется и не печатается.
-
-Запуск:  python tools/ci_status.py [--log]
-"""
 
 import json
 import os
@@ -18,7 +11,6 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API = "https://api.github.com"
 
-
 def remote_slug():
     url = subprocess.run(["git", "remote", "get-url", "origin"],
                          cwd=ROOT, capture_output=True, text=True).stdout.strip()
@@ -26,7 +18,6 @@ def remote_slug():
     if not match:
         raise SystemExit("Не удалось разобрать origin: %s" % url)
     return match.group(1), match.group(2)
-
 
 def token():
     result = subprocess.run(["git", "credential", "fill"], cwd=ROOT,
@@ -37,13 +28,10 @@ def token():
             return line[len("password="):]
     raise SystemExit("Нет сохранённых credentials — сначала сделай git push вручную.")
 
-
 class NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Логи Actions отдают редиректом на подписанный URL — Authorization туда слать нельзя."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
-
 
 def get(path, auth, raw=False):
     request = urllib.request.Request(API + path)
@@ -58,14 +46,12 @@ def get(path, auth, raw=False):
         if raw and error.code in (301, 302, 303, 307, 308):
             location = error.headers.get("Location")
             if location:
-                # Подписанный адрес хранилища: без заголовка Authorization.
                 plain = urllib.request.Request(location)
                 plain.add_header("User-Agent", "talkingjohn-ci-check")
                 with urllib.request.urlopen(plain, timeout=120) as response:
                     return response.read()
         raise
     return data if raw else json.loads(data)
-
 
 def main():
     owner, repo = remote_slug()
@@ -124,7 +110,6 @@ def main():
                 seen.add(clean)
                 print("   " + clean[:240])
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

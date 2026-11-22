@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-"""Проверяет внутренние ссылки Swift-кода: селекторы, свойства, баланс скобок.
-
-Не заменяет компилятор, но ловит опечатки в #selector, обращения к несуществующим
-полям и незакрытые блоки — то, что чаще всего ломает сборку после правок.
-
-Запуск:  python tools/check_swift_refs.py
-"""
 
 import os
 import re
@@ -18,13 +11,11 @@ STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
 LINE_COMMENT = re.compile(r"//[^\n]*")
 BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 
-
 def strip_noise(text):
     text = BLOCK_COMMENT.sub("", text)
     text = STRING.sub('""', text)
     text = LINE_COMMENT.sub("", text)
     return text
-
 
 def main():
     texts = {}
@@ -99,7 +90,6 @@ def main():
         return 1
     print("Ссылки и баланс скобок в порядке.")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

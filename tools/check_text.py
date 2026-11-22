@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Ищет посторонние символы в текстах проекта: CJK, невидимые управляющие,
-битые суррогаты. Ловит случайные вставки, которые ломают читаемость и diff.
-
-Запуск:  python tools/check_text.py
-"""
 
 import os
 import sys
@@ -20,7 +15,6 @@ RANGES = [
     (0xFF00, 0xFFEF, "полноширинные формы"),
 ]
 
-
 def classify(char):
     code = ord(char)
     for low, high, label in RANGES:
@@ -31,7 +25,6 @@ def classify(char):
     if code < 32 and char not in "\n\r\t":
         return "управляющий U+%04X" % code
     return None
-
 
 def main():
     problems = []
@@ -59,7 +52,6 @@ def main():
         return 1
     print("Посторонних символов нет.")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

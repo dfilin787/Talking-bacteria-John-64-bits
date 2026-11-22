@@ -1,17 +1,14 @@
 import Foundation
 
-/// Описание реакции персонажа — аналог `SoundAnimation` из оригинала:
-/// папка кадров, набор звуков, кадр старта звука и флаг перестановки.
 struct Reaction {
     let clipName: String
     let sounds: [SoundBank.Effect]
     let fps: Double
-    /// Кадр, на котором стартует звук (`soundFrameStart`).
+
     let soundFrameStart: Int
-    /// Минимальное число проходов клипа, если звук короче анимации.
+
     let minRepeats: Int
-    /// Обрезать звук по длине клипа: еда показывается ровно один раз, а её
-    /// WAV длиннее клипа и иначе тянул второй проход («ест по 2 раза»).
+
     let trimSoundToClip: Bool
 
     init(clipName: String,
@@ -29,9 +26,6 @@ struct Reaction {
     }
 }
 
-/// Перестановочный выбор вариантов — как `PermutationGenerator` в оригинале:
-/// все варианты проигрываются по одному, прежде чем порядок перемешается заново.
-/// Наивный randomElement() даёт повторы подряд, чего в оригинале не было.
 final class PermutationPicker {
     private var order: [Int] = []
     private var position = 0
@@ -55,7 +49,6 @@ final class PermutationPicker {
     }
 }
 
-/// Выбор реакции из пула по перестановке: сначала все варианты, потом новый порядок.
 final class ReactionPool {
     private let pool: [Reaction]
     private let picker: PermutationPicker
@@ -73,12 +66,6 @@ final class ReactionPool {
     }
 }
 
-/// Готовые реакции. Карта клипов — по наблюдениям за оригиналом:
-/// - толчок бактерии (тап/флинг) → смех `laugh`/`laughGiggle`/`laughGuffaw`;
-/// - шприц → `needle` (сам укол) + вариация реакции `crazy1`/`crazy2`;
-/// - пончик → случайный `eat*Donut`, в конце `multiply` → новая бактерия;
-/// - таблетка в бактерию → `explode` (смерть);
-/// - покой → `sway`/`bumpUpDown`/`bumpLeftRight`/`lookLeftRight`.
 enum Reactions {
     static let headLaugh = Reaction(clipName: "laugh",
                                     sounds: [.laugh, .laugh2, .laugh3],
@@ -89,7 +76,7 @@ enum Reactions {
     static let guffaw = Reaction(clipName: "laughGuffaw",
                                  sounds: [.laugh3, .laugh2],
                                  fps: 16)
-    /// Вариации реакции на укол шприцем.
+
     static let injectionCrazy1 = Reaction(clipName: "crazy1",
                                           sounds: [.crazy1, .crazy1Alt, .crazy1Alt2],
                                           fps: 16)
@@ -102,9 +89,8 @@ enum Reactions {
     static let multiply = Reaction(clipName: "multiply", sounds: [.multiply], fps: 12, minRepeats: 2)
     static let explode = Reaction(clipName: "explode", sounds: [.explode, .explode2], fps: 16)
 
-    /// Смех — реакция на толчок.
     static let laughPool = [headLaugh, giggle, guffaw]
-    /// Вариации укола шприцем.
+
     static let injectionPool = [injectionCrazy1, injectionCrazy2]
     static let eatPool = [eatPink, eatOrange, eatBrown]
 }

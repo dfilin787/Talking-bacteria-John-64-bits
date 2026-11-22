@@ -1,10 +1,5 @@
 import UIKit
 
-/// Проигрыватель покадровой анимации на CADisplayLink.
-///
-/// Повторяет модель оригинального `SoundAnimation`: клип крутится по кругу,
-/// звук привязан к кадру (`soundFrameStart`), а завершение определяется либо
-/// числом повторов (`repeatCount`), либо ожиданием конца звука (`waitForSoundSync`).
 final class BacteriaView: UIView {
 
     private let imageView = UIImageView()
@@ -15,21 +10,17 @@ final class BacteriaView: UIView {
     private var accumulated: TimeInterval = 0
     private var lastTimestamp: TimeInterval = 0
 
-    private var repeatsLeft: Int = 1          // сколько проходов осталось
-    /// repeats == 0 — крутить бесконечно (idle, listen, talk). Отдельный флаг:
-    /// иначе repeatsLeft == 0 на первой границе читался как «финиш» и
-    /// однокадровый `listen` завершался мгновенно — анимки слушания не было.
+    private var repeatsLeft: Int = 1
+
     private var loopsForever = false
-    /// Клип дошёл до конца прохода и ждёт окончания звука, удерживая последний кадр.
+
     private var holdingForSound = false
     private var syncGate: (() -> Bool)?
     private var frameSound: ((Int) -> Void)?
     private var onFinish: (() -> Void)?
 
-    /// Кадров в секунду.
     private(set) var framesPerSecond: Double = 14
 
-    /// Размер кадра в точках родительской системы координат.
     var contentSize: CGSize = CGSize(width: 137, height: 200) {
         didSet { setNeedsLayout() }
     }
@@ -61,18 +52,11 @@ final class BacteriaView: UIView {
         if window == nil { pauseLink() } else if isPlaying { startLink() }
     }
 
-    // MARK: - Управление
-
     func showStaticFrame(_ image: UIImage) {
         stop()
         imageView.image = image
     }
 
-    /// - Parameters:
-    ///   - repeats: число полных проходов клипа; 0 — крутить без ограничения.
-    ///   - syncGate: если задан, клип не остановится, пока замыкание не вернёт true
-    ///     (аналог `waitForSoundSync` — ждём окончания звука).
-    ///   - frameSound: вызывается при входе в кадр, если для него назначен звук.
     func play(_ newClip: AnimationClip,
               repeats: Int = 1,
               fps: Double = 14,
@@ -85,8 +69,7 @@ final class BacteriaView: UIView {
         frameIndex = 0
         accumulated = 0
         lastTimestamp = 0
-        // repeats == 0 без syncGate — вечный клип (idle/listen/talk).
-        // С syncGate repeats == 0 значит «крутить проходы, пока звук не кончится».
+
         loopsForever = (repeats == 0 && syncGate == nil)
         repeatsLeft = max(0, repeats)
         holdingForSound = false
@@ -110,14 +93,11 @@ final class BacteriaView: UIView {
         accumulated = 0
     }
 
-    /// Останавливается и показывает первый кадр текущего клипа.
     func stopAndReset() {
         let first = clip?.frame(at: 0)
         stop()
         if let first { imageView.image = first }
     }
-
-    // MARK: - Тик
 
     private func startLink() {
         guard displayLink == nil else { return }
@@ -149,9 +129,6 @@ final class BacteriaView: UIView {
         let advance = Int(accumulated / frameDuration)
         accumulated -= Double(advance) * frameDuration
 
-        // Проход закончился, звук ещё звучит: продолжаем крутить клип,
-        // но новые проходы уже не считаем — решение будет на следующей границе
-        // (модель waitForSoundSync из оригинала).
         if holdingForSound {
             if syncGate?() == true {
                 finishPlayback()
@@ -167,7 +144,7 @@ final class BacteriaView: UIView {
             let next = frameIndex + 1
 
             if next >= clip.frameCount {
-                // Граница прохода: решение принимается ровно один раз.
+
                 if repeatsLeft > 0 { repeatsLeft -= 1 }
 
                 if let syncGate {
