@@ -57,7 +57,12 @@ final class VoiceRecorder {
     private var lastVoiceAt = Date()
     private var silenceStopScheduled = false
     /// Был ли хоть какой-то голос за время прослушки — авто-стоп только после него.
-    private var heardVoice = false
+    /// Пишется на аудио-потоке, читается на main — под captureLock.
+    private var _heardVoice = false
+    private var heardVoice: Bool {
+        get { captureLock.lock(); defer { captureLock.unlock() }; return _heardVoice }
+        set { captureLock.lock(); _heardVoice = newValue; captureLock.unlock() }
+    }
 
     var settings = Settings()
     private(set) var state: State = .idle
@@ -155,7 +160,7 @@ final class VoiceRecorder {
 
     func stopListeningAndSpeak() {
         guard isCapturing else { return }
-        let captured = collector
+        let captured = tapCollector ?? collector
         tearDownCapture()
 
         // Повторяем только если реально был голос. Иначе рекордер «говорил»
@@ -172,12 +177,9 @@ final class VoiceRecorder {
 
         processingQueue.async { [weak self] in
             guard let self else { return }
-            let shifted = Self.applyPitch(to: raw, semitones: pitch)
+            // Если SoundTouch не отдал сэмплы — играем оригинал, а не молчим.
+            let shifted = Self.applyPitch(to: raw, semitones: pitch) ?? raw
             DispatchQueue.main.async {
-                guard let shifted else {
-                    self.transition(to: .idle)
-                    return
-                }
                 self.play(shifted, volume: volume)
             }
         }

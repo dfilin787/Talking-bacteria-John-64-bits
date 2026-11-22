@@ -39,7 +39,7 @@ final class GameViewController: UIViewController {
     private var effects: EffectPlayer?
     private var recorder: VoiceRecorder!
     /// Бактерия, которая слушает/повторяет голос (долгое нажатие на камеру).
-    private var talker: BacteriaView?
+    private var talkers: [BacteriaView] = []
     /// Счётчик толчков по бактерии: смех не моментальный, а после 2-3 толчков,
     /// когда бактерия остановится (как lastLaughTickle/isLaughing в оригинале).
 
@@ -162,7 +162,7 @@ final class GameViewController: UIViewController {
         draggedBacteria = nil
         busyBacteria.removeAll()
         reactingBacteria.removeAll()
-        talker = nil
+        talkers = []
         // stopAndReset сбрасывает клипы и выбрасывает их completion-замыкания,
         // а именно в них декрементятся eatingCount/pendingChildren. Без сброса
         // счётчики утекают и пончик/размножение молча умирают до перезапуска.
@@ -1185,21 +1185,21 @@ final class GameViewController: UIViewController {
         case .idle:
             finishVoiceRepeat()
             // постоянная прослушка с паузой, чтобы idle-анимации были видны
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
                 self?.startAlwaysListening()
             }
         case .listening:
-            // слушает одна свободная бактерия; занятую (смех/еда/смерть) не
-            // трогаем, иначе прослушка перезаписывала её анимацию каждые ~1.4 с
-            let listener = bacteriaViews.filter({ isFreeForIdle($0) }).randomElement()
-            talker = listener
-            if let listener, let listen = ClipLibrary.shared.clip(ClipName.listen) {
-                listener.play(listen, repeats: 0, fps: 8)
+            // слушают ВСЕ свободные бактерии; занятые реакцией не трогаем
+            if let listen = ClipLibrary.shared.clip(ClipName.listen) {
+                let free = bacteriaViews.filter { isFreeForIdle($0) }
+                talkers = free
+                for view in free { view.play(listen, repeats: 0, fps: 8) }
             }
         case .speaking:
-            if let talker, bacteriaViews.contains(where: { $0 === talker }),
-               let talk = ClipLibrary.shared.clip(ClipName.talk) {
-                talker.play(talk, repeats: 0, fps: 14)
+            if let talk = ClipLibrary.shared.clip(ClipName.talk) {
+                for view in talkers where bacteriaViews.contains(where: { $0 === view }) {
+                    view.play(talk, repeats: 0, fps: 14)
+                }
             }
         case .failed:
             finishVoiceRepeat()
@@ -1212,10 +1212,8 @@ final class GameViewController: UIViewController {
 
     /// Возврат после повтора голоса: говорящий возвращается в колонию.
     private func finishVoiceRepeat() {
-        if let talker {
-            resumeIdle(for: talker)
-        }
-        self.talker = nil
+        for view in talkers { resumeIdle(for: view) }
+        talkers = []
     }
 
 
