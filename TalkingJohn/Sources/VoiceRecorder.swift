@@ -141,12 +141,13 @@ final class VoiceRecorder {
             input.removeTap(onBus: 0)
             input.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buffer, _ in
                 guard let self else { return }
-                // tap с nil-форматом отдаёт нативный формат входа: коллектор
-                // создаём по первому буферу, чтобы частота совпала с записью.
-                if self.collector == nil {
-                    let made = SampleCollector(sampleRate: buffer.format.sampleRate)
-                    DispatchQueue.main.async { self.collector = made }
-                    self.tapCollector = made
+                // Коллектор создаётся РОВНО ОДИН раз за прослушку: проверяем
+                // tapCollector (поле аудио-потока), а не collector — тот
+                // присваивается на main и здесь всегда был nil, из-за чего
+                // коллектор пересоздавался на каждом буфере и запись состояла
+                // из последних 20 мс (повтор не проходил порог 0.25 с).
+                if self.tapCollector == nil {
+                    self.tapCollector = SampleCollector(sampleRate: buffer.format.sampleRate)
                 }
                 if let target = self.tapCollector {
                     self.consume(buffer, into: target)
@@ -166,7 +167,9 @@ final class VoiceRecorder {
         // Повторяем только если реально был голос. Иначе рекордер «говорил»
         // 10 секунд тишины (maxDuration), микрофон в это время выключен —
         // пользователь говорил в пустоту и его никто не слушал.
-        guard heardVoice, let captured, captured.duration >= 0.25,
+        // Голос был — повторяем, даже если запись короткая (порог 0.12 с):
+        // иначе бактерия «ждала разговора», получала его и молча уходила в idle.
+        guard heardVoice, let captured, captured.duration >= 0.12,
               let raw = captured.makeBuffer() else {
             transition(to: .idle)
             return
