@@ -108,22 +108,14 @@ final class VoiceRecorder {
 
         graphQueue.async { [weak self] in
             guard let self else { return }
-            do {
-                self.engine.prepare()
-                if !self.engine.isRunning { try self.engine.start() }
-            } catch {
-                DispatchQueue.main.async {
-                    self.isCapturing = false
-                    self.transition(to: .failed("Не удалось начать запись"))
-                }
-                return
-            }
-            // Формат входа читаем ПОСЛЕ запуска движка — до start он может быть
-            // нулевым, и tap с неверным форматом ничего не слышит.
+            // Движок уже запущен для эффектов БЕЗ входа. Первое обращение к
+            // inputNode добавляет входной узел в живой граф, и tap не получает
+            // данные. Правильный порядок: stop -> вход/формат -> tap -> start.
+            if self.engine.isRunning { self.engine.stop() }
             let input = self.engine.inputNode
+            input.removeTap(onBus: 0)
             var format = input.outputFormat(forBus: 0)
             if format.sampleRate <= 0 || format.channelCount == 0 {
-                // Вход ещё не поднят: активируем сессию и читаем нативный формат.
                 try? AVAudioSession.sharedInstance().setActive(true)
                 format = input.inputFormat(forBus: 0)
             }
@@ -138,7 +130,6 @@ final class VoiceRecorder {
                 }
                 return
             }
-            input.removeTap(onBus: 0)
             input.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buffer, _ in
                 guard let self else { return }
                 // Коллектор создаётся РОВНО ОДИН раз за прослушку: проверяем
@@ -152,6 +143,15 @@ final class VoiceRecorder {
                 if let target = self.tapCollector {
                     self.consume(buffer, into: target)
                 }
+            }
+            // Запускаем граф ПОСЛЕ установки tap — иначе вход не качает данные.
+            self.engine.prepare()
+            do { try self.engine.start() } catch {
+                DispatchQueue.main.async {
+                    self.isCapturing = false
+                    self.transition(to: .failed("Не удалось начать запись"))
+                }
+                return
             }
             DispatchQueue.main.async {
                 self.transition(to: .listening)
@@ -169,8 +169,7 @@ final class VoiceRecorder {
         // пользователь говорил в пустоту и его никто не слушал.
         // Голос был — повторяем, даже если запись короткая (порог 0.12 с):
         // иначе бактерия «ждала разговора», получала его и молча уходила в idle.
-        guard heardVoice, let captured, captured.duration >= 0.12,
-              let raw = captured.makeBuffer() else {
+        guard let captured, let raw = captured.makeBuffer(), captured.duration >= 0.08 else {
             transition(to: .idle)
             return
         }
