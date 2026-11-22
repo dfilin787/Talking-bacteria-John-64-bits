@@ -363,10 +363,12 @@ final class GameViewController: UIViewController {
 
         guard let target = bacteriaViews.last(where: { $0.frame.insetBy(dx: -6, dy: -6).contains(point) }),
               !isBacteriaBusy(target) else { return }
+        interruptVoice(for: target)
         popBacteria(target)
     }
 
     private func pokeBacteria(_ target: BacteriaView, kickVelocity: CGPoint? = nil) {
+        interruptVoice(for: target)
         if let index = bacteriaViews.firstIndex(where: { $0 === target }) {
             if let kickVelocity {
                 bacteriaVelocities[index] = kickVelocity
@@ -498,6 +500,11 @@ final class GameViewController: UIViewController {
         }
     }
 
+    private func interruptVoice(for target: BacteriaView) {
+        reactingBacteria.remove(ObjectIdentifier(target))
+        talkers.removeAll { $0 === target }
+    }
+
     private func popBacteria(_ target: BacteriaView) {
         busyBacteria.insert(ObjectIdentifier(target))
         playEffect(.explode)
@@ -551,6 +558,7 @@ final class GameViewController: UIViewController {
         let view = target ?? bacteriaViews.randomElement()
         guard let view, !isBacteriaBusy(view) else { return }
         if exclusive { busyBacteria.insert(ObjectIdentifier(view)) }
+        talkers.removeAll { $0 === view }
         reactingBacteria.insert(ObjectIdentifier(view))
 
         let picker = soundPicker(for: reaction)
@@ -1040,15 +1048,18 @@ final class GameViewController: UIViewController {
                 self?.startAlwaysListening()
             }
         case .listening:
-
             if let listen = ClipLibrary.shared.clip(ClipName.listen) {
                 let free = bacteriaViews.filter { isFreeForIdle($0) }
                 talkers = free
-                for view in free { view.play(listen, repeats: 0, fps: 8) }
+                for view in free {
+                    reactingBacteria.insert(ObjectIdentifier(view))
+                    view.play(listen, repeats: 0, fps: 8)
+                }
             }
         case .speaking:
             if let talk = ClipLibrary.shared.clip(ClipName.talk) {
                 for view in talkers where bacteriaViews.contains(where: { $0 === view }) {
+                    reactingBacteria.insert(ObjectIdentifier(view))
                     view.play(talk, repeats: 0, fps: 14)
                 }
             }
@@ -1062,7 +1073,10 @@ final class GameViewController: UIViewController {
     }
 
     private func finishVoiceRepeat() {
-        for view in talkers { resumeIdle(for: view) }
+        for view in talkers {
+            reactingBacteria.remove(ObjectIdentifier(view))
+            resumeIdle(for: view)
+        }
         talkers = []
     }
 

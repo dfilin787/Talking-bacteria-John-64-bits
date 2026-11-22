@@ -109,9 +109,10 @@ final class VoiceRecorder {
                 }
                 return
             }
+            var gotSamples = false
             input.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buffer, _ in
                 guard let self else { return }
-
+                gotSamples = true
                 if self.tapCollector == nil {
                     self.tapCollector = SampleCollector(sampleRate: buffer.format.sampleRate)
                 }
@@ -130,6 +131,11 @@ final class VoiceRecorder {
             }
             DispatchQueue.main.async {
                 self.transition(to: .listening)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                guard let self, self.isCapturing, !gotSamples else { return }
+                self.tearDownCapture()
+                self.transition(to: .failed("Вход не качает данные"))
             }
         }
     }
