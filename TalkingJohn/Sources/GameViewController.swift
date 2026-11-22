@@ -65,7 +65,6 @@ final class GameViewController: UIViewController {
     private var pillLastInteraction = Date()
     private let pillIdleTimeout: TimeInterval = 12
     /// Бактерия, которую сейчас убивает таблетка — защита от повторных попаданий.
-    private var pillVictim: BacteriaView?
     /// Сколько бактерий сейчас едят/делятся — не больше 2 одновременно (лимит 6).
     private var eatingCount = 0
     private let maxEating = 2
@@ -566,11 +565,11 @@ final class GameViewController: UIViewController {
         let free = bacteriaViews.filter { !isBacteriaBusy($0) }
         DispatchQueue.main.asyncAfter(deadline: .now() + stabDelay) { [weak self] in
             guard let self else { return }
+            // одна вариация на всех: этот укол — crazy1, следующий — crazy2
+            guard let reaction = self.injectionPool.next() else { return }
             for bacteria in free where self.bacteriaViews.contains(where: { $0 === bacteria })
                 && !self.isBacteriaBusy(bacteria) {
-                if let reaction = self.injectionPool.next() {
-                    self.perform(reaction, on: bacteria, exclusive: false)
-                }
+                self.perform(reaction, on: bacteria, exclusive: false)
             }
         }
     }
@@ -778,7 +777,6 @@ final class GameViewController: UIViewController {
     private func spawnPill() {
         guard !pillOnScreen else { return }
         pillOnScreen = true
-        pillVictim = nil
         pillLastInteraction = Date()
         let side = 50 * scale
         pillView.bounds = CGRect(x: 0, y: 0, width: side, height: side)
@@ -793,7 +791,6 @@ final class GameViewController: UIViewController {
     private func removePill() {
         stopPillPhysics()
         pillOnScreen = false
-        pillVictim = nil
         pillView.isHidden = true
         pillView.alpha = 1
         pillView.transform = .identity
@@ -1074,20 +1071,11 @@ final class GameViewController: UIViewController {
     /// делают; исчезает только по таймауту бездействия.
     private func consumePill(on victim: BacteriaView) {
         // защита: одна бактерия не может умирать от таблетки повторно
-        guard pillVictim !== victim, !isBacteriaBusy(victim) else { return }
-        pillVictim = victim
+        guard !isBacteriaBusy(victim) else { return }
         pillLastInteraction = Date()
-        // таблетка отскакивает от жертвы и продолжает жить
-        let dx = pillView.center.x - victim.center.x
-        let dy = pillView.center.y - victim.center.y
-        let len = max(hypot(dx, dy), 1)
-        let bounce: CGFloat = 260 * scale
-        pillVelocity = CGPoint(x: dx / len * bounce, y: dy / len * bounce)
+        // Таблетка ПРОЛЕТАЕТ сквозь бактерию (как в оригинале): скорость не
+        // меняется, бактерия умирает. Летит дальше и убивает следующих.
         popBacteria(victim)
-        // после смерти жертвы таблетка снова может убивать других
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            if self?.pillVictim === victim { self?.pillVictim = nil }
-        }
     }
 
     // MARK: - Покой

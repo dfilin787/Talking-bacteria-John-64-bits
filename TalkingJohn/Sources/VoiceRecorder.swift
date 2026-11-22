@@ -70,7 +70,10 @@ final class VoiceRecorder {
         self.engine = engine
         self.graphQueue = graphQueue
         engine.attach(playerNode)
-        engine.connect(playerNode, to: engine.mainMixerNode, format: format)
+        // nil-формат: узел согласуется с микшером, частоту которого задаёт вход
+        // микрофона (48к). Жёсткие 44.1к не совпадали с буфером записи (48к),
+        // и scheduleBuffer молчал — бактерия не говорила.
+        engine.connect(playerNode, to: engine.mainMixerNode, format: nil)
     }
 
     deinit {
@@ -240,7 +243,11 @@ final class VoiceRecorder {
             }
             self.playerNode.stop()
             self.playerNode.volume = volume
-            self.playerNode.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
+            // Буфер записи — в формате микшера, иначе воспроизведение молчит.
+            let mixerFormat = self.engine.mainMixerNode.outputFormat(forBus: 0)
+            let prepared = (mixerFormat.sampleRate > 0
+                ? SoundBank.convert(buffer, to: mixerFormat) : nil) ?? buffer
+            self.playerNode.scheduleBuffer(prepared, at: nil, options: [], completionHandler: nil)
             self.playerNode.play()
 
             DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.06) { [weak self] in
