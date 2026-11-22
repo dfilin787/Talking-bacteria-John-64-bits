@@ -27,9 +27,9 @@ final class VoiceRecorder {
     struct Settings {
         var maxDuration: TimeInterval = 10
         /// Порог RMS, ниже которого считается тишиной.
-        var noiseGate: Float = 0.0035
+        var noiseGate: Float = 0.012
         /// Сколько секунд тишины подряд завершают запись (после того как голос был).
-        var silenceTimeout: TimeInterval = 0.9
+        var silenceTimeout: TimeInterval = 1.0
         /// Насколько поднять голос, в полутонах.
         var pitchSemitones: Double = 9
         var volume: Float = 1.0
@@ -245,10 +245,13 @@ final class VoiceRecorder {
         let voiced = rms > settings.noiseGate
         if voiced { lastVoiceAt = Date(); heardVoice = true }
         let silence = Date().timeIntervalSince(lastVoiceAt)
-        // авто-стоп по тишине только после того, как голос реально был;
-        // иначе ждём, пока пользователь заговорит (до maxDuration)
-        let shouldStop = elapsed >= settings.maxDuration
-            || (heardVoice && silence >= settings.silenceTimeout)
+        // Говоришь — слушает; замолчал на ~1 с — повторяет и заканчивает.
+        // Если голоса не было вовсе, окно ожидания короткое (3 с), чтобы поза
+        // слушания не висела вечно на фоновом шуме.
+        let idleWindow: TimeInterval = 3.0
+        let shouldStop = (heardVoice && silence >= settings.silenceTimeout)
+            || (!heardVoice && elapsed >= idleWindow)
+            || elapsed >= settings.maxDuration
 
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isCapturing else { return }
