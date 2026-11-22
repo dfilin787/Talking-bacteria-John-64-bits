@@ -99,7 +99,9 @@ final class EffectPlayer {
         for _ in 0..<voices {
             let node = AVAudioPlayerNode()
             engine.attach(node)
-            engine.connect(node, to: engine.mainMixerNode, format: format)
+            // nil-формат: движок сам согласует узел с микшером. Жёсткий формат
+            // 44.1к при входе микрофона 48к ронял граф (краш на первой кнопке).
+            engine.connect(node, to: engine.mainMixerNode, format: nil)
             players.append(node)
             deadlines.append(0)
         }

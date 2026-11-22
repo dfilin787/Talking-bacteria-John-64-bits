@@ -16,6 +16,7 @@ class Player:
 
     def __init__(self, frame_count, repeats, sync_gate=None, frame_sound=None):
         self.frame_count = frame_count
+        self.loops_forever = (repeats == 0 and sync_gate is None)
         self.repeats_left = repeats
         self.sync_gate = sync_gate
         self.frame_sound = frame_sound
@@ -60,7 +61,7 @@ class Player:
                     self.frame_index = self.frame_count - 1
                     return
 
-                if self.repeats_left == 0:
+                if not self.loops_forever and self.repeats_left == 0:
                     self.frame_index = self.frame_count - 1
                     finished = True
                     break

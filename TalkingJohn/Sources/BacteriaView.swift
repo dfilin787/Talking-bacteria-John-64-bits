@@ -15,7 +15,11 @@ final class BacteriaView: UIView {
     private var accumulated: TimeInterval = 0
     private var lastTimestamp: TimeInterval = 0
 
-    private var repeatsLeft: Int = 1          // 0 = бесконечно
+    private var repeatsLeft: Int = 1          // сколько проходов осталось
+    /// repeats == 0 — крутить бесконечно (idle, listen, talk). Отдельный флаг:
+    /// иначе repeatsLeft == 0 на первой границе читался как «финиш» и
+    /// однокадровый `listen` завершался мгновенно — анимки слушания не было.
+    private var loopsForever = false
     /// Клип дошёл до конца прохода и ждёт окончания звука, удерживая последний кадр.
     private var holdingForSound = false
     private var syncGate: (() -> Bool)?
@@ -81,6 +85,9 @@ final class BacteriaView: UIView {
         frameIndex = 0
         accumulated = 0
         lastTimestamp = 0
+        // repeats == 0 без syncGate — вечный клип (idle/listen/talk).
+        // С syncGate repeats == 0 значит «крутить проходы, пока звук не кончится».
+        loopsForever = (repeats == 0 && syncGate == nil)
         repeatsLeft = max(0, repeats)
         holdingForSound = false
         self.syncGate = syncGate
@@ -142,13 +149,17 @@ final class BacteriaView: UIView {
         let advance = Int(accumulated / frameDuration)
         accumulated -= Double(advance) * frameDuration
 
-        // Проход закончился, звук ещё звучит: держим ПОСЛЕДНИЙ кадр (не крутим
-        // клип заново — иначе еда/смех проигрывались дважды), ждём конца звука.
+        // Проход закончился, звук ещё звучит: продолжаем крутить клип,
+        // но новые проходы уже не считаем — решение будет на следующей границе
+        // (модель waitForSoundSync из оригинала).
         if holdingForSound {
             if syncGate?() == true {
                 finishPlayback()
+                return
             }
-            return
+            holdingForSound = false
+            frameIndex = 0
+            frameSound?(0)
         }
 
         var finished = false
@@ -171,7 +182,7 @@ final class BacteriaView: UIView {
                     return
                 }
 
-                if repeatsLeft == 0 {
+                if !loopsForever && repeatsLeft == 0 {
                     frameIndex = clip.frameCount - 1
                     finished = true
                     break

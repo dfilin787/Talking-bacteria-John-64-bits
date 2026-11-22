@@ -663,27 +663,42 @@ final class GameViewController: UIViewController {
         var soundStarted = false
         var voice = -1
 
+        // Еда показывается ровно один раз: её WAV длиннее клипа, поэтому звук
+        // режем по длине клипа и не даём syncGate тянуть второй проход.
+        let clipDuration = Double(clip.frameCount) / reaction.fps
+        let playedBuffer: AVAudioPCMBuffer?
+        if reaction.trimSoundToClip, let buffer {
+            playedBuffer = Self.trim(buffer, toSeconds: clipDuration)
+        } else {
+            playedBuffer = buffer
+        }
+
+        // Клип держится, пока его звук ещё звучит. isPlaying потокобезопасен
+        // (deadlinesLock): queue.sync здесь вызывался с main, пока queue занята,
+        // и вешал/ронял игру на кнопках. Для еды синк не нужен — звук обрезан.
+        var gate: (() -> Bool)?
+        if !reaction.trimSoundToClip {
+            gate = { [weak self] in
+                guard let self, voice >= 0 else { return true }
+                return !(self.effects?.isPlaying(voice: voice) ?? false)
+            }
+        }
+
         target.play(
             clip,
             repeats: max(1, reaction.minRepeats),
             fps: reaction.fps,
-            syncGate: { [weak self] in
-                // клип держится, пока его звук ещё звучит
-                guard let self, voice >= 0 else { return true }
-                var alive = false
-                self.queue.sync { alive = self.effects?.isPlaying(voice: voice) ?? false }
-                return !alive
-            },
+            syncGate: gate,
             frameSound: { [weak self] frame in
                 guard let self, !soundStarted, frame == startFrame else { return }
                 soundStarted = true
-                if let buffer {
+                if let playedBuffer {
                     self.queue.async { [weak self] in
                         guard let self else { return }
                         if !self.audioEngine.isRunning {
                             do { try self.audioEngine.start() } catch { return }
                         }
-                        let (_, idx) = self.effects?.play(buffer) ?? (0, -1)
+                        let (_, idx) = self.effects?.play(playedBuffer) ?? (0, -1)
                         DispatchQueue.main.async { voice = idx }
                     }
                 }
@@ -700,6 +715,25 @@ final class GameViewController: UIViewController {
             }
         )
         reactionVoices[ObjectIdentifier(target)] = { voice }
+    }
+
+    /// Обрезает буфер до заданной длительности (звук еды по длине клипа).
+    private static func trim(_ buffer: AVAudioPCMBuffer, toSeconds seconds: Double) -> AVAudioPCMBuffer? {
+        let maxFrames = AVAudioFrameCount(seconds * buffer.format.sampleRate)
+        guard maxFrames > 0, buffer.frameLength > maxFrames,
+              let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: maxFrames) else {
+            return buffer
+        }
+        copy.frameLength = maxFrames
+        let channels = Int(buffer.format.channelCount)
+        if let src = buffer.floatChannelData, let dst = copy.floatChannelData {
+            for ch in 0..<channels { dst[ch].update(from: src[ch], count: Int(maxFrames)) }
+        } else if let src = buffer.int16ChannelData, let dst = copy.int16ChannelData {
+            for ch in 0..<channels { dst[ch].update(from: src[ch], count: Int(maxFrames)) }
+        } else {
+            return buffer
+        }
+        return copy
     }
 
     /// Голос, звучащий у бактерии (для обрезки при прерывании/смерти).

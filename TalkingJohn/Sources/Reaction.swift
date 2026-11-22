@@ -10,17 +10,22 @@ struct Reaction {
     let soundFrameStart: Int
     /// Минимальное число проходов клипа, если звук короче анимации.
     let minRepeats: Int
+    /// Обрезать звук по длине клипа: еда показывается ровно один раз, а её
+    /// WAV длиннее клипа и иначе тянул второй проход («ест по 2 раза»).
+    let trimSoundToClip: Bool
 
     init(clipName: String,
          sounds: [SoundBank.Effect],
          fps: Double = 15,
          soundFrameStart: Int = 0,
-         minRepeats: Int = 1) {
+         minRepeats: Int = 1,
+         trimSoundToClip: Bool = false) {
         self.clipName = clipName
         self.sounds = sounds
         self.fps = fps
         self.soundFrameStart = soundFrameStart
         self.minRepeats = minRepeats
+        self.trimSoundToClip = trimSoundToClip
     }
 }
 
@@ -91,9 +96,9 @@ enum Reactions {
     static let injectionCrazy2 = Reaction(clipName: "crazy2",
                                           sounds: [.crazy1Alt, .crazy1Alt2, .crazy1],
                                           fps: 16)
-    static let eatPink = Reaction(clipName: "eatPinkDonut", sounds: [.eat1, .eat2], fps: 15)
-    static let eatOrange = Reaction(clipName: "eatOrangeDonut", sounds: [.eat2, .eat1], fps: 15)
-    static let eatBrown = Reaction(clipName: "eatBrownDonut", sounds: [.eat1, .eat2], fps: 15)
+    static let eatPink = Reaction(clipName: "eatPinkDonut", sounds: [.eat1, .eat2], fps: 15, trimSoundToClip: true)
+    static let eatOrange = Reaction(clipName: "eatOrangeDonut", sounds: [.eat2, .eat1], fps: 15, trimSoundToClip: true)
+    static let eatBrown = Reaction(clipName: "eatBrownDonut", sounds: [.eat1, .eat2], fps: 15, trimSoundToClip: true)
     static let multiply = Reaction(clipName: "multiply", sounds: [.multiply], fps: 12, minRepeats: 2)
     static let explode = Reaction(clipName: "explode", sounds: [.explode, .explode2], fps: 16)
 
